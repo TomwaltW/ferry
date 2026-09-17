@@ -2,6 +2,10 @@
 /dist/
 /bin/
 
+# Runtime data
+*.db
+.ferry/
+
 # Local orchestration, not part of the repository
 /.worktrees/
 /review/
