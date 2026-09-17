@@ -1,0 +1,295 @@
+{
+  "version": "1.0.0",
+  "agents": [
+    {
+      "id": "qwen-code",
+      "name": "Qwen Code",
+      "version": "0.23.3",
+      "description": "Alibaba's Qwen coding assistant",
+      "repository": "https://github.com/QwenLM/qwen-code",
+      "website": "https://qwenlm.github.io/qwen-code-docs/en/users/overview",
+      "authors": [
+        "Alibaba Qwen Team"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/QwenLM/qwen-code/blob/main/LICENSE",
+      "distribution": {
+        "npx": {
+          "package": "@qwen-code/qwen-code@0.23.3",
+          "args": [
+            "--acp",
+            "--experimental-skills"
+          ]
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/qwen-code.svg"
+    },
+    {
+      "id": "kimi",
+      "name": "Kimi CLI",
+      "version": "1.50.0",
+      "description": "Moonshot AI's coding assistant",
+      "repository": "https://github.com/MoonshotAI/kimi-cli",
+      "website": "https://moonshotai.github.io/kimi-cli/",
+      "authors": [
+        "Moonshot AI"
+      ],
+      "license": "MIT",
+      "license_url": "https://github.com/MoonshotAI/kimi-cli/blob/main/LICENSE",
+      "distribution": {
+        "binary": {
+          "darwin-aarch64": {
+            "archive": "https://github.com/MoonshotAI/kimi-cli/releases/download/1.50.0/kimi-1.50.0-aarch64-apple-darwin.tar.gz",
+            "cmd": "./kimi",
+            "args": [
+              "acp"
+            ],
+            "sha256": "5684f903cfc1ca1be4135a2634f7db108c787827c084b41df6a98eb01c9012df"
+          },
+          "linux-aarch64": {
+            "archive": "https://github.com/MoonshotAI/kimi-cli/releases/download/1.50.0/kimi-1.50.0-aarch64-unknown-linux-gnu.tar.gz",
+            "cmd": "./kimi",
+            "args": [
+              "acp"
+            ],
+            "sha256": "de235322f48abe63e7a8d737f39f0c00fecf724f1dfaa1ae02491bb773ae8070"
+          },
+          "linux-x86_64": {
+            "archive": "https://github.com/MoonshotAI/kimi-cli/releases/download/1.50.0/kimi-1.50.0-x86_64-unknown-linux-gnu.tar.gz",
+            "cmd": "./kimi",
+            "args": [
+              "acp"
+            ],
+            "sha256": "10ccaa26ee7f5bb43f7c05baf808c11cd0160710b07ac422382d1d1923f3dab6"
+          },
+          "windows-aarch64": {
+            "archive": "https://github.com/MoonshotAI/kimi-cli/releases/download/1.50.0/kimi-1.50.0-aarch64-pc-windows-msvc.zip",
+            "cmd": "./kimi.exe",
+            "args": [
+              "acp"
+            ],
+            "sha256": "45fdb98d41a37e5430c332290a9cd97cb0586c428c1d49f6e11c54c80efdfc85"
+          },
+          "windows-x86_64": {
+            "archive": "https://github.com/MoonshotAI/kimi-cli/releases/download/1.50.0/kimi-1.50.0-x86_64-pc-windows-msvc.zip",
+            "cmd": "./kimi.exe",
+            "args": [
+              "acp"
+            ],
+            "sha256": "2752f041cd7ead131c81b06f32bd1cf30afadf9b2e4741f7273331877aef6b33"
+          }
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/kimi.svg"
+    },
+    {
+      "id": "codebuddy-code",
+      "name": "Codebuddy Code",
+      "version": "2.150.0",
+      "description": "Tencent Cloud's official intelligent coding tool",
+      "website": "https://www.codebuddy.cn/cli/",
+      "authors": [
+        "Tencent Cloud"
+      ],
+      "license": "Proprietary",
+      "license_url": "https://www.codebuddy.cn/agreement/",
+      "distribution": {
+        "npx": {
+          "package": "@tencent-ai/codebuddy-code@2.150.0",
+          "args": [
+            "--acp"
+          ]
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/codebuddy-code.svg"
+    },
+    {
+      "id": "minimax-code",
+      "name": "MiniMax Code",
+      "version": "0.2.7",
+      "description": "MiniMax Code is an AI coding agent with Agent Client Protocol support.",
+      "website": "https://agent.minimax.io",
+      "authors": [
+        "MiniMax"
+      ],
+      "license": "MIT",
+      "license_url": "https://agent.minimax.io/doc/en/terms-of-service.html",
+      "distribution": {
+        "npx": {
+          "package": "@minimax-ai/code@0.2.7",
+          "args": [
+            "acp"
+          ]
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/minimax-code.svg"
+    },
+    {
+      "id": "qoder",
+      "name": "Qoder CLI",
+      "version": "0.2.14",
+      "description": "AI coding assistant with agentic capabilities",
+      "website": "https://qoder.com",
+      "authors": [
+        "Qoder AI"
+      ],
+      "license": "proprietary",
+      "license_url": "https://qoder.com/product-service?lang=en",
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/qoder.svg",
+      "distribution": {
+        "npx": {
+          "package": "@qoder-ai/qodercli@0.2.14",
+          "args": [
+            "--acp"
+          ]
+        }
+      }
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "version": "1.18.30",
+      "description": "The open source coding agent",
+      "repository": "https://github.com/anomalyco/opencode",
+      "website": "https://opencode.ai",
+      "authors": [
+        "Anomaly"
+      ],
+      "license": "MIT",
+      "license_url": "https://github.com/anomalyco/opencode/blob/dev/LICENSE",
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/opencode.svg",
+      "distribution": {
+        "binary": {
+          "darwin-aarch64": {
+            "archive": "https://github.com/anomalyco/opencode/releases/download/v1.18.30/opencode-darwin-arm64.zip",
+            "cmd": "./opencode",
+            "args": [
+              "acp"
+            ],
+            "sha256": "a5e43d6887386efc7d68ce49ae28e3bbdfdee3dfd1d7169b612c3ce67e53b1e8"
+          },
+          "darwin-x86_64": {
+            "archive": "https://github.com/anomalyco/opencode/releases/download/v1.18.30/opencode-darwin-x64.zip",
+            "cmd": "./opencode",
+            "args": [
+              "acp"
+            ],
+            "sha256": "7453007e58ff122401438d95ccb24334874b5908dcaee77883f96c23395d5710"
+          },
+          "linux-aarch64": {
+            "archive": "https://github.com/anomalyco/opencode/releases/download/v1.18.30/opencode-linux-arm64.tar.gz",
+            "cmd": "./opencode",
+            "args": [
+              "acp"
+            ],
+            "sha256": "4111a55c2a02c0fac314bd51e9a2330280e6d29d2b85b9554fff6d62612566ed"
+          },
+          "linux-x86_64": {
+            "archive": "https://github.com/anomalyco/opencode/releases/download/v1.18.30/opencode-linux-x64.tar.gz",
+            "cmd": "./opencode",
+            "args": [
+              "acp"
+            ],
+            "sha256": "55007246858165496ff85ba1c2b648f7421e8e2013bf4189a680c9ff8e699d17"
+          },
+          "windows-aarch64": {
+            "archive": "https://github.com/anomalyco/opencode/releases/download/v1.18.30/opencode-windows-arm64.zip",
+            "cmd": "./opencode",
+            "args": [
+              "acp"
+            ],
+            "sha256": "35d6ff7d80aff5ade71ac06fc32dd89357b5b0bac050fc6db41ecf0929cea560"
+          },
+          "windows-x86_64": {
+            "archive": "https://github.com/anomalyco/opencode/releases/download/v1.18.30/opencode-windows-x64.zip",
+            "cmd": "./opencode.exe",
+            "args": [
+              "acp"
+            ],
+            "sha256": "c8c0e0d05ac3dac544a0edfad8de9eb244bf46c6c7a131c38619d40fcf31bd1f"
+          }
+        }
+      }
+    },
+    {
+      "id": "glm-acp-agent",
+      "name": "GLM Agent",
+      "version": "1.8.0",
+      "description": "ACP agent powered by Zhipu AI's GLM Coding Plan models (glm-5.1, glm-5-turbo, glm-4.7, glm-4.5-air). Supports streaming, tool calls, mid-session model switching, image input via Z.AI Coding Plan Vision MCP, and session load/fork/resume with on-disk persistence.",
+      "repository": "https://github.com/stefandevo/glm-acp-agent",
+      "authors": [
+        "Stefan de Vogelaere"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/stefandevo/glm-acp-agent/blob/main/LICENSE",
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/glm-acp-agent.svg",
+      "distribution": {
+        "npx": {
+          "package": "glm-acp-agent@1.8.0"
+        }
+      }
+    },
+    {
+      "id": "claude-acp",
+      "name": "Claude Agent",
+      "version": "0.78.0",
+      "description": "ACP wrapper for Anthropic's Claude",
+      "repository": "https://github.com/agentclientprotocol/claude-agent-acp",
+      "authors": [
+        "Anthropic",
+        "Zed Industries",
+        "JetBrains"
+      ],
+      "license": "proprietary",
+      "license_url": "https://github.com/agentclientprotocol/claude-agent-acp/blob/main/LICENSE",
+      "distribution": {
+        "npx": {
+          "package": "@agentclientprotocol/claude-agent-acp@0.78.0"
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/claude-acp.svg"
+    },
+    {
+      "id": "codex-acp",
+      "name": "Codex",
+      "version": "1.12.0",
+      "description": "ACP adapter for OpenAI's coding assistant",
+      "repository": "https://github.com/agentclientprotocol/codex-acp",
+      "authors": [
+        "OpenAI",
+        "JetBrains s.r.o",
+        "Zed Industries"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/agentclientprotocol/codex-acp/blob/main/LICENSE",
+      "distribution": {
+        "npx": {
+          "package": "@agentclientprotocol/codex-acp@1.12.0"
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/codex-acp.svg"
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini CLI",
+      "version": "0.59.0",
+      "description": "Google's official CLI for Gemini",
+      "repository": "https://github.com/google-gemini/gemini-cli",
+      "website": "https://geminicli.com",
+      "authors": [
+        "Google"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/google-gemini/gemini-cli/blob/main/LICENSE",
+      "distribution": {
+        "npx": {
+          "package": "@google/gemini-cli@0.59.0",
+          "args": [
+            "--acp"
+          ]
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/gemini.svg"
+    }
+  ]
+}
