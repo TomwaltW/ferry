@@ -1,6 +1,6 @@
 # Ferry
 
-**English** · [中文版 README](README.zh-CN.md) · Apache-2.0 · status: P0 skeleton
+**English** · [中文版 README](README.zh-CN.md) · Apache-2.0 · status: P1 WeChat + managed sessions
 
 Carry your coding agents to chat. Ferry is a self-hosted daemon that puts one
 chat bot in front of every coding agent you already run — so you can start a
@@ -22,11 +22,11 @@ and pick the session back up in your terminal.
 
 ## Status
 
-Ferry is under active construction. P0 freezes the protocol types, the test
-doubles and the bilingual scaffolding; there is no working chat entry point yet.
-The roadmap is P1 WeChat plus managed sessions, P2 terminal handoff plus
-reliable delivery, P3 Feishu, proxy and PTY. Everything user-facing ships in
-English and Chinese from day one.
+Ferry is under active construction. P1 is in: scan to log in, pairing, managed
+sessions over ACP, approvals in chat, and an outbox that respects WeChat's reply
+window. Terminal handoff and reliable out-of-window delivery are P2; Feishu, the
+proxy driver and PTY are P3. Everything user-facing ships in English and Chinese
+from day one.
 
 ## Install
 
@@ -45,9 +45,19 @@ go build ./cmd/ferry
 
 ## Quick start
 
-Not available yet — the chat entry point lands in P1. Until then the only
-command is `ferry version`. The walkthrough is being written in
-[docs/en/quickstart.md](docs/en/quickstart.md).
+```sh
+ferry init
+ferry login wechat
+ferry daemon
+```
+
+`ferry init` asks for your language, the directories agents may work in, and a
+default agent. `ferry login wechat` prints a QR code — scan it with the account
+that should *be* the bot, from a second account you will chat from. Then message
+that bot `/new kimi ~/code/demo`, send it a task, and answer any approval with
+`y <code>`. The full walkthrough is in
+[docs/en/quickstart.md](docs/en/quickstart.md), and the chat side is documented
+in [docs/en/wechat.md](docs/en/wechat.md).
 
 ## Documentation
 

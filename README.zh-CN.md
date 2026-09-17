@@ -1,6 +1,6 @@
 # Ferry
 
-[English README](README.md) · **中文** · Apache-2.0 · 状态：P0 骨架
+[English README](README.md) · **中文** · Apache-2.0 · 状态：P1 微信 + 托管会话
 
 把你的编码 agent 带到聊天窗口。Ferry 是一个自托管的守护进程，让你已经在用的
 每个编码 agent 共用同一个聊天机器人 —— 于是你可以在手机上发起任务、离开键盘时
@@ -20,9 +20,9 @@
 
 ## 当前状态
 
-Ferry 还在施工中。P0 冻结协议类型、测试替身和双语脚手架，还没有可用的聊天入口。
-路线图是 P1 微信加托管会话，P2 终端接力加可靠投递，P3 飞书、proxy 与 PTY。
-所有面向用户的东西从第一天起就同时提供英文和中文。
+Ferry 还在施工中。P1 已经进来了：扫码登录、配对、经 ACP 的托管会话、
+在聊天里审批，以及一个照顾微信回复窗口的发件箱。终端接力和窗口外的可靠补投是 P2；
+飞书、proxy 驱动和 PTY 是 P3。所有面向用户的东西从第一天起就同时提供英文和中文。
 
 ## 安装
 
@@ -41,8 +41,18 @@ go build ./cmd/ferry
 
 ## 快速上手
 
-暂时还没有 —— 聊天入口要到 P1 才落地。在那之前唯一可用的命令是 `ferry version`。
-完整流程正在 [docs/zh-CN/quickstart.md](docs/zh-CN/quickstart.md) 里补写。
+```sh
+ferry init
+ferry login wechat
+ferry daemon
+```
+
+`ferry init` 问你语言、允许 agent 工作的目录、默认 agent。
+`ferry login wechat` 会画出二维码 —— 用**要当 bot 的那个号**扫，
+平时用另一个号跟它说话。然后给那个 bot 发 `/new kimi ~/code/demo`，
+派个活，审批用 `y <编码>` 回。完整流程见
+[docs/zh-CN/quickstart.md](docs/zh-CN/quickstart.md)，
+聊天这一侧见 [docs/zh-CN/wechat.md](docs/zh-CN/wechat.md)。
 
 ## 文档
 
