@@ -1,0 +1,100 @@
+# GoReleaser configuration (v2 format).
+# Local check: goreleaser check
+# Dry run:     goreleaser release --snapshot --clean
+version: 2
+
+project_name: ferry
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: ferry
+    main: ./cmd/ferry
+    binary: ferry
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .FullCommit }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: ferry
+    name_template: "ferry_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  draft: false
+  prerelease: auto
+  # English first, Chinese second.
+  header: |
+    ## Ferry {{ .Tag }}
+
+    Ferry carries your coding agents to chat.
+
+    ### Install
+
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/TomwaltW/ferry/{{ .Tag }}/scripts/install.sh | sh
+    ```
+
+    Behind the Great Firewall, set a mirror prefix first:
+
+    ```sh
+    export FERRY_GITHUB_PROXY=https://ghfast.top/
+    ```
+
+    Or download the archive for your platform below and verify it against `checksums.txt`.
+
+    ### Changes
+  footer: |
+    ---
+
+    ## Ferry {{ .Tag }}（中文）
+
+    Ferry 把你的编码 agent 接到聊天窗口里。
+
+    ### 安装
+
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/TomwaltW/ferry/{{ .Tag }}/scripts/install.sh | sh
+    ```
+
+    国内网络可先设置镜像前缀：
+
+    ```sh
+    export FERRY_GITHUB_PROXY=https://ghfast.top/
+    ```
+
+    也可以直接下载下方对应平台的压缩包，并用 `checksums.txt` 校验 sha256。
