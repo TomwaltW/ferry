@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +36,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	fakeAgentBin = filepath.Join(dir, "ferry-fakeagent")
+	fakeAgentBin = filepath.Join(dir, "ferry-fakeagent"+acpExeSuffix)
 	build := exec.Command("go", "build", "-o", fakeAgentBin, "github.com/TomwaltW/ferry/cmd/ferry-fakeagent")
 	if out, err := build.CombinedOutput(); err != nil {
 		os.RemoveAll(dir)
@@ -580,3 +581,11 @@ func TestSetConfigUnsupported(t *testing.T) {
 		t.Errorf("SetConfig(thinking) = %v, want fsp.ErrUnsupported", err)
 	}
 }
+
+// acpExeSuffix is what Windows needs before a built binary can be executed.
+var acpExeSuffix = func() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
+}()

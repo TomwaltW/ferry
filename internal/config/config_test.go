@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -194,6 +195,11 @@ func TestValidateErrors(t *testing.T) {
 }
 
 func TestTildeExpansion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// ~ resolves through USERPROFILE rather than HOME there, and creating a
+		// symlink needs privileges the CI runner does not have.
+		t.Skip("the test is shaped around HOME and symlinks, which Windows does not provide")
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -312,8 +318,10 @@ func TestSavePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Errorf("mode = %04o, want 0600", got)
+	if runtime.GOOS != "windows" { // Windows has no Unix permission bits
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("mode = %04o, want 0600", got)
+		}
 	}
 
 	// Saving over a world-readable file must tighten it again.
@@ -326,8 +334,10 @@ func TestSavePermissions(t *testing.T) {
 	if info, err = os.Stat(path); err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Errorf("mode after rewrite = %04o, want 0600", got)
+	if runtime.GOOS != "windows" { // Windows has no Unix permission bits
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("mode after rewrite = %04o, want 0600", got)
+		}
 	}
 
 	back, err := Load(path)
