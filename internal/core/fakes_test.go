@@ -109,6 +109,8 @@ type fakeOutbox struct {
 	msgs     []fsp.Outbound
 	windows  []ports.Window
 	flushed  []fsp.EndpointID
+	pulls    []fsp.EndpointID
+	files    []int
 	blockRun chan struct{}
 }
 
@@ -468,6 +470,7 @@ func (a *fakeAgent) isClosed() bool {
 
 type fakeDriver struct {
 	mu        sync.Mutex
+	kind      fsp.DriverKind // empty means ACP
 	started   []*fakeAgent
 	resumed   []*fakeAgent
 	startErr  error
@@ -475,7 +478,12 @@ type fakeDriver struct {
 	next      int
 }
 
-func (f *fakeDriver) Kind() fsp.DriverKind { return fsp.DriverACP }
+func (f *fakeDriver) Kind() fsp.DriverKind {
+	if f.kind == "" {
+		return fsp.DriverACP
+	}
+	return f.kind
+}
 
 func (f *fakeDriver) Start(ctx context.Context, spec ports.SessionSpec, ap ports.Approver) (ports.AgentSession, error) {
 	f.mu.Lock()
@@ -845,17 +853,37 @@ var (
 	_ ports.Store        = (*memStore)(nil)
 )
 
-// --- P2 placeholders -------------------------------------------------------
-// The Outbox interface grew Pull, File and Held in P2. The P2 T3 task gives
-// them real behaviour and real tests; these keep P1's suite compiling.
+// --- P2 ---------------------------------------------------------------------
+// Pull, File and Held belong to the P2 T3 task; the core only has to call them,
+// so the double records the calls and nothing more.
 
-func (f *fakeOutbox) Pull(ctx context.Context, ep fsp.EndpointID) error { return fsp.ErrUnsupported }
+func (f *fakeOutbox) Pull(ctx context.Context, ep fsp.EndpointID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pulls = append(f.pulls, ep)
+	return nil
+}
 
 func (f *fakeOutbox) File(ctx context.Context, ep fsp.EndpointID, n int) error {
-	return fsp.ErrUnsupported
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.files = append(f.files, n)
+	return nil
 }
 
 func (f *fakeOutbox) Held(ep fsp.EndpointID) int { return 0 }
+
+func (f *fakeOutbox) pullCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.pulls)
+}
+
+func (f *fakeOutbox) fileCalls() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.files...)
+}
 
 func (m *memStore) HoldOutbox(ctx context.Context, id int64, at time.Time) error {
 	return fsp.ErrUnsupported

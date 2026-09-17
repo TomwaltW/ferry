@@ -54,12 +54,13 @@ type Daemon struct {
 	log   *slog.Logger
 	roots []string // workspace roots, absolute with symlinks resolved
 
-	mu       sync.Mutex
-	sessions map[fsp.SessionID]*session // every session that is not closed
-	windows  map[string]string          // endpoint -> reply context of its last inbound
-	imFailed bool                       // the adapter is down and a retry is pending
-	imDetail string
-	stop     bool // the daemon is shutting down; parking stays silent
+	mu        sync.Mutex
+	sessions  map[fsp.SessionID]*session // every session that is not closed
+	windows   map[string]string          // endpoint -> reply context of its last inbound
+	terminals map[string]terminalList    // endpoint -> the numbers its last /ls gave terminal sessions
+	imFailed  bool                       // the adapter is down and a retry is pending
+	imDetail  string
+	stop      bool // the daemon is shutting down; parking stays silent
 
 	wg sync.WaitGroup
 }
@@ -70,10 +71,11 @@ func New(d Deps) *Daemon {
 		log = slog.New(slog.DiscardHandler)
 	}
 	dm := &Daemon{
-		deps:     d,
-		log:      log,
-		sessions: make(map[fsp.SessionID]*session),
-		windows:  make(map[string]string),
+		deps:      d,
+		log:       log,
+		sessions:  make(map[fsp.SessionID]*session),
+		windows:   make(map[string]string),
+		terminals: make(map[string]terminalList),
 	}
 	for _, root := range d.Config.Workspace.Roots {
 		norm, err := normalizePath(root)
@@ -223,6 +225,8 @@ func (d *Daemon) markOffline(ctx context.Context, err error) {
 	d.mu.Unlock()
 	d.log.Warn("platform session expired, log in again", "error", err)
 	d.audit(ctx, ports.AuditEntry{Kind: "expired", Detail: err.Error()})
+	// Chat is exactly what is unavailable, so the operator is told elsewhere.
+	d.wake(ctx, "im_offline", nil)
 }
 
 // shutdown closes every live session and leaves it parked. Closed sessions keep

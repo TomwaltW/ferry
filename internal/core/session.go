@@ -267,6 +267,12 @@ func (s *session) flush(ctx context.Context, urgent bool) {
 // park drops the agent behind the session and tells the endpoint how to get it
 // back. It is called when the agent process is gone and when the daemon stops.
 func (s *session) park(ctx context.Context) {
+	s.parkWith(ctx, "session.parked", "agent gone")
+}
+
+// parkWith is park with the wording and the audit detail of whatever asked for
+// it: the agent going away reads differently from ferry back taking it home.
+func (s *session) parkWith(ctx context.Context, key, detail string) {
 	s.mu.Lock()
 	if s.closing || s.rec.State == fsp.StateParked || s.rec.State == fsp.StateClosed {
 		s.mu.Unlock()
@@ -293,7 +299,7 @@ func (s *session) park(ctx context.Context) {
 			Endpoint: rec.Owner,
 			Session:  rec.ID,
 			Kind:     fsp.OutText,
-			Text:     s.d.t(ctx, rec.Owner, "session.parked", map[string]any{"Slot": s.slot}),
+			Text:     s.d.t(ctx, rec.Owner, key, map[string]any{"Slot": s.slot}),
 			Urgent:   true,
 		})
 	}
@@ -301,7 +307,7 @@ func (s *session) park(ctx context.Context) {
 		Kind:     "session_parked",
 		Endpoint: rec.Owner,
 		Session:  rec.ID,
-		Detail:   "agent gone",
+		Detail:   detail,
 	})
 }
 
