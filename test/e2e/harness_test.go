@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -50,7 +51,11 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "e2e: temp dir:", err)
 		os.Exit(1)
 	}
-	agentBin = filepath.Join(dir, "ferry-fakeagent")
+	name := "ferry-fakeagent"
+	if runtime.GOOS == "windows" {
+		name += ".exe" // Windows will not exec a file without the extension
+	}
+	agentBin = filepath.Join(dir, name)
 	if _, err := os.Stat("../../go.mod"); err != nil {
 		fmt.Fprintln(os.Stderr, "e2e: expected to run from the repository:", err)
 		os.Exit(1)
@@ -300,9 +305,37 @@ func (r *rig) newSession() {
 	r.waitOwnerText("会话 1")
 }
 
-var approvalID = regexp.MustCompile(`\b([a-km-z]{5})\b`)
+// approvalID matches the ID inside the reply instructions of an approval
+// request ("回复 y <id> 允许一次"). Matching the leading "审批 <id>" instead
+// would also match approval.decided, which shares that prefix.
+var approvalID = regexp.MustCompile(`y ([a-km-z]{5})\b`)
 
-// approvalIDFrom pulls the 5 character approval ID out of an approval message.
+// approvalMark is the part of approval.request that no other message carries.
+// It is checked against the catalog so a wording change fails loudly here
+// rather than silently matching the wrong message.
+func (r *rig) approvalMark() string {
+	r.t.Helper()
+	const mark = "回复 y "
+	req := r.tr("approval.request", map[string]any{
+		"ID": "aaaaa", "Tool": "t", "Description": "d", "Preview": "p", "AlwaysHint": "",
+	})
+	if !strings.Contains(req, mark) {
+		r.t.Fatalf("approval.request no longer contains %q, update the e2e marker:\n%s", mark, req)
+	}
+	if decided := r.tr("approval.decided", map[string]any{"ID": "aaaaa", "Decision": "x"}); strings.Contains(decided, mark) {
+		r.t.Fatalf("approval.decided also contains %q, so it no longer tells the two apart", mark)
+	}
+	return mark
+}
+
+// waitApproval waits for the next approval request after from and returns its ID.
+func (r *rig) waitApproval(from int) (string, string) {
+	r.t.Helper()
+	msg := r.waitOwnerTextFrom(from, r.approvalMark())
+	return msg, r.approvalIDFrom(msg)
+}
+
+// approvalIDFrom pulls the 5 character approval ID out of an approval request.
 func (r *rig) approvalIDFrom(msg string) string {
 	r.t.Helper()
 	m := approvalID.FindStringSubmatch(msg)

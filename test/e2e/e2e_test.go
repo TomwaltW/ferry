@@ -78,8 +78,7 @@ func TestApprovalFlow(t *testing.T) {
 
 	mark := r.markOwner()
 	r.send("ask execute " + filepath.Join(r.ws, "demo", "run.sh"))
-	ask := r.waitOwnerTextFrom(mark, "审批")
-	id := r.approvalIDFrom(ask)
+	_, id := r.waitApproval(mark)
 
 	// A verdict naming an unknown approval is dropped silently.
 	noVerdict := r.markOwner()
@@ -92,8 +91,7 @@ func TestApprovalFlow(t *testing.T) {
 	// A second approval that nobody answers is rejected once the timeout passes.
 	second := r.markOwner()
 	r.send("ask execute " + filepath.Join(r.ws, "demo", "again.sh"))
-	ask2 := r.waitOwnerTextFrom(second, "审批")
-	id2 := r.approvalIDFrom(ask2)
+	_, id2 := r.waitApproval(second)
 	if id2 == id {
 		t.Fatalf("second approval reused ID %q", id)
 	}
@@ -109,12 +107,12 @@ func TestPolicy(t *testing.T) {
 	readMark := r.markOwner()
 	r.send("ask read " + filepath.Join(r.ws, "demo", "a.txt"))
 	r.waitOwnerTextFrom(readMark, "allowed")
-	r.refuteFrom(ownerID, readMark, "审批", "a read inside the workspace is allowed by policy, not by asking")
+	r.refuteFrom(ownerID, readMark, r.approvalMark(), "a read inside the workspace is allowed by policy, not by asking")
 
 	delMark := r.markOwner()
 	r.send("ask delete /etc/passwd")
 	r.waitOwnerTextFrom(delMark, "denied")
-	r.refuteFrom(ownerID, delMark, "审批", "a delete outside the workspace is denied by policy, not by asking")
+	r.refuteFrom(ownerID, delMark, r.approvalMark(), "a delete outside the workspace is denied by policy, not by asking")
 }
 
 // B6: /stop cancels the running turn.
