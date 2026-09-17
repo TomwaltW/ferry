@@ -19,7 +19,6 @@ const (
 	bodySessionGone   = `{"ret":-14,"errcode":-14,"errmsg":"session expired"}`
 	bodyBadToken      = `{"ret":-2,"errmsg":"invalid context_token"}`
 	bodyWindowExpired = `{"ret":-2,"errmsg":"context_token expired"}`
-	bodyNotImplement  = `{"ret":-1,"errmsg":"not implemented"}`
 )
 
 func normalizePath(p string) string { return strings.TrimPrefix(p, "/") }
@@ -33,6 +32,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/"+ilinkwire.PathGetConfig, s.guard(s.authed(s.handleGetConfig)))
 	mux.HandleFunc("/"+ilinkwire.PathSendTyping, s.guard(s.authed(s.handleSendTyping)))
 	mux.HandleFunc("/"+ilinkwire.PathGetUploadURL, s.guard(s.authed(s.handleGetUploadURL)))
+	// The media CDN is a separate host in production; here it shares the
+	// listener so that one Server stands in for both.
+	mux.HandleFunc(cdnPrefix+"/upload", s.guard(s.handleCDNUpload))
+	mux.HandleFunc(cdnPrefix+"/download", s.guard(s.handleCDNDownload))
 	return mux
 }
 
@@ -244,10 +247,6 @@ func (s *Server) handleSendTyping(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	writeRaw(w, http.StatusOK, bodyOK)
-}
-
-func (s *Server) handleGetUploadURL(w http.ResponseWriter, _ *http.Request) {
-	writeRaw(w, http.StatusOK, bodyNotImplement)
 }
 
 // indexOfLocked maps a cursor to the position that follows it. An empty or

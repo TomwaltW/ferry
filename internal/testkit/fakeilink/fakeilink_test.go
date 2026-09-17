@@ -636,11 +636,13 @@ func TestConfigAndTyping(t *testing.T) {
 	}
 }
 
-func TestUploadURLNotImplemented(t *testing.T) {
+func TestUploadURLRejectsIncompleteRequest(t *testing.T) {
 	s := newLoggedIn(t, Options{})
+	// Neither a filekey nor a key to encrypt with: there is nothing to hand
+	// out an upload address for.
 	_, apiErr := post[ilinkwire.APIError](t, s, ilinkwire.PathGetUploadURL, map[string]any{}, authHeaders(s))
-	if apiErr.Ret != -1 || apiErr.ErrMsg != "not implemented" {
-		t.Errorf("getuploadurl = %+v, want ret=-1 not implemented", apiErr)
+	if apiErr.Ret != -1 || apiErr.ErrMsg != "bad request" {
+		t.Errorf("getuploadurl = %+v, want ret=-1 bad request", apiErr)
 	}
 }
 

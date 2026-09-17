@@ -26,21 +26,32 @@ var errNoDedupeKey = errors.New("wechat: outbound message has no dedupe key")
 // Send delivers one message and reports what the gateway made of it. It never
 // retries; the outbox owns that decision.
 func (a *Adapter) Send(ctx context.Context, msg fsp.Outbound, replyCtx string) (fsp.DeliveryState, error) {
-	if msg.Kind == fsp.OutFile {
-		return fsp.DeliveryRejected, fsp.ErrUnsupported
-	}
 	if replyCtx == "" {
 		return fsp.DeliveryRejected, fsp.ErrNoWindow
 	}
 	if msg.DedupeKey == "" {
 		return fsp.DeliveryRejected, errNoDedupeKey
 	}
+	if msg.Kind == fsp.OutFile {
+		return a.sendFile(ctx, msg, replyCtx)
+	}
 
 	text := msg.Text
 	if a.cfg.Render == renderPlainMode {
 		text = renderPlain(text)
 	}
+	a.log.Debug("wechat: sending text", "chars", len([]rune(text)))
 
+	return a.deliver(ctx, msg, replyCtx, ilinkwire.MessageItem{
+		Type:     ilinkwire.ItemText,
+		TextItem: &ilinkwire.TextItem{Text: text},
+	})
+}
+
+// deliver posts one already built item and reports what the gateway made of
+// it. Both the text and the media path end here, so they read the same answers
+// the same way.
+func (a *Adapter) deliver(ctx context.Context, msg fsp.Outbound, replyCtx string, item ilinkwire.MessageItem) (fsp.DeliveryState, error) {
 	req := ilinkwire.SendMessageReq{
 		Msg: &ilinkwire.Message{
 			FromUserID:   a.creds.BotID,
@@ -49,10 +60,7 @@ func (a *Adapter) Send(ctx context.Context, msg fsp.Outbound, replyCtx string) (
 			ContextToken: replyCtx,
 			MessageType:  ilinkwire.MsgTypeBot,
 			MessageState: ilinkwire.StateFinish,
-			ItemList: []ilinkwire.MessageItem{{
-				Type:     ilinkwire.ItemText,
-				TextItem: &ilinkwire.TextItem{Text: text},
-			}},
+			ItemList:     []ilinkwire.MessageItem{item},
 		},
 		BaseInfo: a.cli.baseInfo(),
 	}
@@ -60,7 +68,6 @@ func (a *Adapter) Send(ctx context.Context, msg fsp.Outbound, replyCtx string) (
 	err := a.cli.post(ctx, ilinkwire.PathSendMessage, req, nil)
 	switch {
 	case err == nil:
-		a.log.Debug("wechat: message sent", "chars", len([]rune(text)))
 		return fsp.DeliveryAccepted, nil
 	case sessionExpired(err):
 		a.setOffline("session expired")

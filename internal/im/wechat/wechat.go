@@ -36,6 +36,7 @@ type Adapter struct {
 	clk   clock.Clock
 	log   *slog.Logger
 	cli   *client
+	cdn   *cdnClient
 
 	mu     sync.Mutex
 	online bool
@@ -79,6 +80,7 @@ func New(opts Options) (*Adapter, error) {
 		clk:   clk,
 		log:   log,
 		cli:   newClient(base, opts.Creds.BotToken, cfg.ChannelVersion),
+		cdn:   newCDNClient(cfg.CDNBaseURL),
 	}
 	if opts.Creds.BotToken == "" {
 		a.detail = "not logged in"

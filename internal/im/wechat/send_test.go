@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -73,7 +75,7 @@ func TestSendUsesContextTokenAndClientID(t *testing.T) {
 		}{
 			{"no dedupe key", fsp.Outbound{Endpoint: a.endpoint(peer), Kind: fsp.OutText, Text: "x"}, token, errNoDedupeKey},
 			{"no window", fsp.Outbound{Endpoint: a.endpoint(peer), Kind: fsp.OutText, Text: "x", DedupeKey: "dk-2"}, "", fsp.ErrNoWindow},
-			{"file", fsp.Outbound{Endpoint: a.endpoint(peer), Kind: fsp.OutFile, FilePath: "/tmp/x", DedupeKey: "dk-3"}, token, fsp.ErrUnsupported},
+			{"missing file", fsp.Outbound{Endpoint: a.endpoint(peer), Kind: fsp.OutFile, FilePath: filepath.Join(t.TempDir(), "gone.txt"), DedupeKey: "dk-3"}, token, fs.ErrNotExist},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
