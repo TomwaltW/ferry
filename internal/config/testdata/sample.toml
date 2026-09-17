@@ -1,0 +1,36 @@
+lang = "zh-CN"
+default_agent = "kimi"
+
+[wechat]
+approvers = ["owner"]
+
+[workspace]
+roots = ["~/code"]
+
+[[agents]]
+name = "kimi"
+registry = "kimi"
+
+[[agents]]
+name = "qwen-code"
+registry = "qwen-code"
+env = { OPENAI_BASE_URL = "https://example.invalid/v1" }
+
+[[agents]]
+name = "my-agent"
+command = ["/usr/local/bin/my-agent", "--acp"]
+
+[policy]
+approval_timeout = "10m"
+
+[[policy.rules]]
+kind = ["execute"]
+command_pattern = "^(go test|npm test)"
+action = "allow"
+
+[outbox]
+merge_interval = "30s"
+reply_budget = 8
+
+[registry]
+npm_registry = "https://registry.npmmirror.com"
