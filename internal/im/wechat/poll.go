@@ -72,7 +72,7 @@ func (a *Adapter) Run(ctx context.Context, out chan<- fsp.Inbound) error {
 		}
 
 		for _, m := range resp.Msgs {
-			in, ok := a.toInbound(m)
+			in, ok := a.toInbound(ctx, m)
 			if !ok {
 				continue
 			}
@@ -116,10 +116,20 @@ func nextBackoff(current time.Duration) time.Duration {
 
 // toInbound converts a gateway message. Messages the bot itself sent and group
 // messages are dropped, which is what the false return means.
-func (a *Adapter) toInbound(m ilinkwire.Message) (fsp.Inbound, bool) {
+//
+// Media is downloaded here, inside the poll loop: the gateway holds the next
+// request for half a minute anyway, and a message must not reach the core
+// before the files it mentions exist on disk.
+func (a *Adapter) toInbound(ctx context.Context, m ilinkwire.Message) (fsp.Inbound, bool) {
 	if m.MessageType == ilinkwire.MsgTypeBot || m.GroupID != "" {
 		return fsp.Inbound{}, false
 	}
+
+	id := m.ClientID
+	if m.MessageID != 0 {
+		id = strconv.FormatInt(m.MessageID, 10)
+	}
+	ep := a.endpoint(m.FromUserID)
 
 	var texts []string
 	var atts []fsp.Attachment
@@ -135,23 +145,17 @@ func (a *Adapter) toInbound(m ilinkwire.Message) (fsp.Inbound, bool) {
 			if it.VoiceItem != nil && it.VoiceItem.Text != "" {
 				texts = append(texts, it.VoiceItem.Text)
 			}
-			atts = append(atts, fsp.Attachment{Kind: "voice", Name: it.MsgID})
-		case ilinkwire.ItemImage:
-			atts = append(atts, fsp.Attachment{Kind: "image", Name: it.MsgID})
-		case ilinkwire.ItemFile:
-			atts = append(atts, fileAttachment("file", it))
+			atts = append(atts, a.attach(ctx, ep, id, it))
+		case ilinkwire.ItemImage, ilinkwire.ItemFile:
+			atts = append(atts, a.attach(ctx, ep, id, it))
 		case ilinkwire.ItemVideo:
+			// Video is described but never fetched this round.
 			atts = append(atts, fileAttachment("video", it))
 		}
 	}
 
-	id := m.ClientID
-	if m.MessageID != 0 {
-		id = strconv.FormatInt(m.MessageID, 10)
-	}
-
 	return fsp.Inbound{
-		Endpoint:    a.endpoint(m.FromUserID),
+		Endpoint:    ep,
 		SenderID:    m.FromUserID,
 		MessageID:   id,
 		Text:        strings.Join(texts, "\n"),
@@ -161,8 +165,8 @@ func (a *Adapter) toInbound(m ilinkwire.Message) (fsp.Inbound, bool) {
 	}, true
 }
 
-// fileAttachment describes a file or video item. Nothing is downloaded in P1,
-// so Path stays empty.
+// fileAttachment describes a video item from its metadata alone. Video is out
+// of scope this round, so Path stays empty.
 func fileAttachment(kind string, it ilinkwire.MessageItem) fsp.Attachment {
 	att := fsp.Attachment{Kind: kind, Name: it.MsgID}
 	if it.FileItem == nil {

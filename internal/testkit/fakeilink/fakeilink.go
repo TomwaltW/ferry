@@ -104,6 +104,10 @@ type Server struct {
 	sent     []SentRecord
 	typingCh []TypingRecord
 
+	// media: keys promised at getuploadurl time, and the objects the CDN holds
+	uploadKeys map[string]string     // filekey -> aes key, hexadecimal
+	objects    map[string]*cdnObject // encrypted_query_param -> stored object
+
 	// fault injection, one shot per path
 	fails map[string]FailMode
 }
@@ -128,17 +132,19 @@ func New(opts Options) *Server {
 	}
 
 	s := &Server{
-		opts:      opts,
-		clk:       opts.Clock,
-		closed:    make(chan struct{}),
-		botID:     ids.New("bot"),
-		qrImg:     map[string]string{},
-		cursorFor: map[int]string{},
-		cursorAt:  map[string]int{},
-		pushed:    make(chan struct{}),
-		windows:   map[string]*window{},
-		seenIDs:   map[string]bool{},
-		fails:     map[string]FailMode{},
+		opts:       opts,
+		clk:        opts.Clock,
+		closed:     make(chan struct{}),
+		botID:      ids.New("bot"),
+		qrImg:      map[string]string{},
+		cursorFor:  map[int]string{},
+		cursorAt:   map[string]int{},
+		pushed:     make(chan struct{}),
+		windows:    map[string]*window{},
+		seenIDs:    map[string]bool{},
+		uploadKeys: map[string]string{},
+		objects:    map[string]*cdnObject{},
+		fails:      map[string]FailMode{},
 	}
 	s.http = httptest.NewServer(s.routes())
 	s.URL = s.http.URL
