@@ -10,6 +10,10 @@ import (
 	"github.com/TomwaltW/ferry/internal/ports"
 )
 
+// defaultMaxMediaMB is the attachment size limit when the configuration leaves
+// it unset, per spec-p2 3.2.
+const defaultMaxMediaMB = 20
+
 // handleInbound runs the eleven steps of spec-p1 3.6 for one inbound message.
 func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 	ep := in.Endpoint
@@ -67,11 +71,10 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 		return
 	}
 
-	// 7. Attachments on their own are not supported yet.
-	if strings.TrimSpace(text) == "" {
-		if len(in.Attachments) != 0 {
-			d.reply(ctx, ep, "media.unsupported", nil)
-		}
+	// 7. Attachments that made it to disk join the prompt; the ones that did
+	// not are reported, and the text still goes through.
+	attachments := d.attachmentLines(ctx, ep, in.Attachments)
+	if strings.TrimSpace(text) == "" && len(attachments) == 0 {
 		return
 	}
 
@@ -93,6 +96,13 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 	} else if role != "owner" {
 		prompt = "[from " + in.SenderID + "] " + text
 	}
+	if len(attachments) != 0 {
+		prompt = strings.TrimRight(prompt, "\n")
+		if prompt != "" {
+			prompt += "\n"
+		}
+		prompt += strings.Join(attachments, "\n")
+	}
 
 	// 10. A busy session collects the text instead of answering.
 	if s.submit(ctx, prompt) {
@@ -108,4 +118,32 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 		Session:  s.id(),
 		Detail:   fmt.Sprintf("len=%d", len([]rune(text))),
 	})
+}
+
+// attachmentLines turns the attachments of an inbound message into the lines
+// appended to the prompt. An attachment without a path never made it to disk:
+// the endpoint is told why, and the agent never hears about it.
+func (d *Daemon) attachmentLines(ctx context.Context, ep fsp.EndpointID, atts []fsp.Attachment) []string {
+	var lines []string
+	maxMB := d.maxMediaMB()
+	for _, a := range atts {
+		if a.Path != "" {
+			lines = append(lines, d.t(ctx, ep, "prompt.attachment", map[string]any{"Path": a.Path}))
+			continue
+		}
+		if a.Size > int64(maxMB)<<20 {
+			d.reply(ctx, ep, "media.too_large", map[string]any{"Max": maxMB})
+			continue
+		}
+		d.reply(ctx, ep, "media.download_failed", map[string]any{"Name": a.Name})
+	}
+	return lines
+}
+
+// maxMediaMB is the size past which an attachment is not downloaded at all.
+func (d *Daemon) maxMediaMB() int {
+	if n := d.deps.Config.WeChat.MaxMediaMB; n > 0 {
+		return n
+	}
+	return defaultMaxMediaMB
 }

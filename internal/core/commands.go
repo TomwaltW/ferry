@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/TomwaltW/ferry/internal/fsp"
 	"github.com/TomwaltW/ferry/internal/ids"
@@ -35,8 +36,10 @@ func (d *Daemon) runCommand(ctx context.Context, in fsp.Inbound, cmd ports.Comma
 		d.cmdLang(ctx, ep, cmd.Args)
 	case "pair":
 		d.cmdPair(ctx, in, cmd.Args)
-	case "pull", "file":
-		d.reply(ctx, ep, "feature.coming", nil)
+	case "pull":
+		d.cmdPull(ctx, ep)
+	case "file":
+		d.cmdFile(ctx, ep, cmd.Args)
 	case "help":
 		d.reply(ctx, ep, "help.text", nil)
 	default:
@@ -51,9 +54,23 @@ func (d *Daemon) maxSessions() int {
 	return defaultMaxSessions
 }
 
-func (d *Daemon) driver() (ports.Driver, bool) {
-	dr, ok := d.deps.Drivers[fsp.DriverACP]
+// driverFor picks the driver a session spec belongs to: an agent that is
+// already running as a local service goes to the server driver, everything else
+// speaks ACP over its own standard streams.
+func (d *Daemon) driverFor(spec ports.SessionSpec) (ports.Driver, bool) {
+	dr, ok := d.deps.Drivers[driverKind(spec)]
 	return dr, ok && dr != nil
+}
+
+func driverKind(spec ports.SessionSpec) fsp.DriverKind {
+	if spec.Server != nil {
+		return fsp.DriverServer
+	}
+	return fsp.DriverACP
+}
+
+func noDriver(spec ports.SessionSpec) string {
+	return "no " + string(driverKind(spec)) + " driver configured"
 }
 
 // startSession resolves the agent, starts it in cwd and binds the result to the
@@ -67,9 +84,9 @@ func (d *Daemon) startSession(ctx context.Context, ep fsp.EndpointID, agent, cwd
 	if d.countManaged() >= d.maxSessions() {
 		return nil, fsp.ErrQuotaExceeded
 	}
-	dr, ok := d.driver()
+	dr, ok := d.driverFor(spec)
 	if !ok {
-		return nil, errors.New("no acp driver configured")
+		return nil, errors.New(noDriver(spec))
 	}
 	spec.Cwd = cwd
 
@@ -165,8 +182,20 @@ func (d *Daemon) cmdUse(ctx context.Context, ep fsp.EndpointID, args []string) {
 		d.reply(ctx, ep, "usage.use", nil)
 		return
 	}
+	force := false
+	for _, arg := range args[1:] {
+		if strings.EqualFold(strings.TrimSpace(arg), "force") {
+			force = true
+		}
+	}
 	s := d.bySlot(ctx, ep, n)
 	if s == nil {
+		// Numbers past the bound sessions belong to the terminal entries the
+		// last /ls printed.
+		if ts, ok := d.terminalBySlot(ep, n); ok {
+			d.adoptTerminal(ctx, ep, ts, n, force)
+			return
+		}
 		d.reply(ctx, ep, "session.not_found", map[string]any{"Slot": n})
 		return
 	}
@@ -193,9 +222,9 @@ func (d *Daemon) resume(ctx context.Context, ep fsp.EndpointID, s *session, slot
 		d.reply(ctx, ep, "session.start_failed", map[string]any{"Agent": rec.Agent, "Reason": err.Error()})
 		return
 	}
-	dr, ok := d.driver()
+	dr, ok := d.driverFor(spec)
 	if !ok {
-		d.reply(ctx, ep, "session.start_failed", map[string]any{"Agent": rec.Agent, "Reason": "no acp driver configured"})
+		d.reply(ctx, ep, "session.start_failed", map[string]any{"Agent": rec.Agent, "Reason": noDriver(spec)})
 		return
 	}
 	spec.Cwd = rec.Cwd
@@ -292,18 +321,27 @@ func (d *Daemon) cmdClose(ctx context.Context, ep fsp.EndpointID, args []string)
 	d.reply(ctx, ep, "session.closed", map[string]any{"Slot": slot})
 }
 
+// cmdLs lists the sessions Ferry owns first, numbered by their slot, and then
+// the terminal sessions it could take over, numbered on from there. Those
+// numbers are remembered for a minute, so a /use right after can use them.
 func (d *Daemon) cmdLs(ctx context.Context, ep fsp.EndpointID) {
 	bindings, err := d.deps.Store.Bindings(ctx, ep)
 	if err != nil {
 		d.log.Error("bindings", "endpoint", ep.String(), "error", err)
 		return
 	}
-	if len(bindings) == 0 {
+	terminals := d.terminalSessions(ctx, ep)
+	if len(bindings) == 0 && len(terminals) == 0 {
 		d.reply(ctx, ep, "hint.no_session", nil)
 		return
 	}
+
 	lines := []string{d.t(ctx, ep, "session.list_header", nil)}
+	next := 1
 	for _, b := range bindings {
+		if b.Slot+1 > next {
+			next = b.Slot + 1
+		}
 		rec, ok := d.record(ctx, b.Session)
 		if !ok {
 			continue
@@ -320,7 +358,53 @@ func (d *Daemon) cmdLs(ctx context.Context, ep fsp.EndpointID) {
 			"State": d.t(ctx, ep, "session.state."+string(rec.State), nil),
 		}))
 	}
+
+	numbered := make(map[int]ports.TerminalSession, len(terminals))
+	for _, ts := range terminals {
+		numbered[next] = ts
+		lines = append(lines, d.t(ctx, ep, "session.list_terminal_item", map[string]any{
+			"Slot":  next,
+			"Agent": ts.Agent,
+			"Title": ts.Title,
+			"When":  formatWhen(ts.UpdatedAt),
+		}))
+		next++
+	}
+	d.rememberTerminals(ep, numbered)
+
 	d.send(ctx, fsp.Outbound{Endpoint: ep, Kind: fsp.OutText, Text: strings.Join(lines, "\n"), Urgent: true})
+}
+
+// formatWhen is the short local timestamp the session list carries. A session
+// the agent could not date shows nothing rather than the zero time.
+func formatWhen(at time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	return at.Local().Format("01-02 15:04")
+}
+
+func (d *Daemon) cmdPull(ctx context.Context, ep fsp.EndpointID) {
+	if err := d.deps.Outbox.Pull(ctx, ep); err != nil {
+		d.log.Error("pull held messages", "endpoint", ep.String(), "error", err)
+	}
+}
+
+// cmdFile resends a long output that went out as a file. Without a number it is
+// the most recent one.
+func (d *Daemon) cmdFile(ctx context.Context, ep fsp.EndpointID, args []string) {
+	n := 1
+	if len(args) != 0 {
+		parsed, err := strconv.Atoi(strings.TrimSpace(args[0]))
+		if err != nil || parsed <= 0 {
+			d.reply(ctx, ep, "usage.use", nil)
+			return
+		}
+		n = parsed
+	}
+	if err := d.deps.Outbox.File(ctx, ep, n); err != nil {
+		d.log.Error("resend a long output", "endpoint", ep.String(), "n", n, "error", err)
+	}
 }
 
 // record returns the live record of a session, falling back to the store.

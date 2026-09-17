@@ -359,17 +359,6 @@ func TestNewAndEcho(t *testing.T) {
 	}
 }
 
-func TestMediaUnsupported(t *testing.T) {
-	h := newHarness(t)
-	h.newSession()
-	h.send(ownerID, "", fsp.Attachment{Kind: "image", Name: "cat.png"})
-	msg := h.waitText("media.unsupported|")
-
-	if want := "media.unsupported|zh-CN"; msg.Text != want {
-		t.Errorf("reply = %q, want %q", msg.Text, want)
-	}
-}
-
 func TestOwnerTextNotPrefixed(t *testing.T) {
 	h := newHarness(t)
 	agent := h.newSession()
@@ -757,7 +746,7 @@ func TestLsAndAgents(t *testing.T) {
 	}
 
 	h.owner("/pull")
-	h.waitText("feature.coming|")
+	h.waitFor("the outbox to be asked for the next batch", func() bool { return h.outbox.pullCount() == 1 })
 	h.owner("/help")
 	h.waitText("help.text|")
 }
