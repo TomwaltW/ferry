@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -27,10 +29,17 @@ type memStore struct {
 	rows    []ports.OutboxRow // index+1 is the row ID
 	windows map[string]ports.Window
 	audits  []ports.AuditEntry
+	heldAt  map[int64]time.Time
+	longs   []ports.LongOutput
+	longSeq int64
+	slots   []ports.Binding
 }
 
 func newMemStore() *memStore {
-	return &memStore{windows: make(map[string]ports.Window)}
+	return &memStore{
+		windows: make(map[string]ports.Window),
+		heldAt:  make(map[int64]time.Time),
+	}
 }
 
 func (s *memStore) AddOutbox(_ context.Context, msg fsp.Outbound, at time.Time) (int64, error) {
@@ -159,8 +168,16 @@ func (s *memStore) SetForeground(context.Context, fsp.EndpointID, fsp.SessionID)
 	return fsp.ErrUnsupported
 }
 
-func (s *memStore) Bindings(context.Context, fsp.EndpointID) ([]ports.Binding, error) {
-	return nil, fsp.ErrUnsupported
+func (s *memStore) Bindings(_ context.Context, ep fsp.EndpointID) ([]ports.Binding, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []ports.Binding
+	for _, b := range s.slots {
+		if b.Endpoint == ep {
+			out = append(out, b)
+		}
+	}
+	return out, nil
 }
 
 func (s *memStore) SeenMessage(context.Context, fsp.EndpointID, string, time.Time) (bool, error) {
@@ -239,6 +256,14 @@ func (f *fakeIM) replyCtx(i int) string {
 	return f.ctxs[i]
 }
 
+// reset forgets what was sent, so that a test can look at one phase at a time.
+func (f *fakeIM) reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = nil
+	f.ctxs = nil
+}
+
 func (f *fakeIM) script(rs ...result) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -268,8 +293,38 @@ func (fakeI18n) T(_ fsp.Lang, key string, args map[string]any) string {
 	if len(args) == 0 {
 		return key
 	}
-	return fmt.Sprintf("%s(N=%v)", key, args["N"])
+	parts := make([]string, 0, len(args))
+	for _, k := range slices.Sorted(maps.Keys(args)) {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, args[k]))
+	}
+	return fmt.Sprintf("%s(%s)", key, strings.Join(parts, ","))
 }
+
+// fakeWaker records the out-of-band reminders the outbox raises.
+type fakeWaker struct {
+	mu    sync.Mutex
+	calls []wakeCall
+}
+
+type wakeCall struct {
+	Endpoint fsp.EndpointID
+	Kind     string
+	Args     map[string]any
+}
+
+func (w *fakeWaker) Wake(_ context.Context, ep fsp.EndpointID, kind string, args map[string]any) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.calls = append(w.calls, wakeCall{Endpoint: ep, Kind: kind, Args: args})
+}
+
+func (w *fakeWaker) wakes() []wakeCall {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]wakeCall(nil), w.calls...)
+}
+
+var _ ports.Waker = (*fakeWaker)(nil)
 
 // ---------- harness ----------
 
@@ -286,6 +341,8 @@ type harness struct {
 	store *memStore
 	im    *fakeIM
 	clk   *clock.Fake
+	waker *fakeWaker
+	home  string
 	ctx   context.Context
 	start time.Time
 }
@@ -297,6 +354,11 @@ func newBox(t *testing.T, tune func(*config.OutboxConfig)) *harness {
 		ReplyBudget:         8,
 		LongOutputThreshold: 1500,
 		SendTimeout:         config.Duration{Duration: 15 * time.Second},
+		WindowTTL:           config.Duration{Duration: config.DefaultWindowTTL},
+		DigestMax:           5,
+		FileKeep:            20,
+		// Splitting is P1's behaviour; the tests about files ask for files.
+		LongOutput: config.LongOutputSplit,
 	}
 	if tune != nil {
 		tune(&cfg)
@@ -307,6 +369,8 @@ func newBox(t *testing.T, tune func(*config.OutboxConfig)) *harness {
 		store: newMemStore(),
 		im:    &fakeIM{},
 		clk:   clock.NewFake(start),
+		waker: &fakeWaker{},
+		home:  t.TempDir(),
 		ctx:   context.Background(),
 		start: start,
 	}
@@ -317,6 +381,8 @@ func newBox(t *testing.T, tune func(*config.OutboxConfig)) *harness {
 		I18n:   fakeI18n{},
 		Clock:  h.clk,
 		Log:    slog.New(slog.DiscardHandler),
+		Waker:  h.waker,
+		Home:   h.home,
 	}).(*box)
 	return h
 }
@@ -354,10 +420,15 @@ func (h *harness) open(replyCtx string) {
 
 func (h *harness) enqueue(session fsp.SessionID, text string, urgent bool) {
 	h.t.Helper()
+	h.enqueueKind(session, text, fsp.OutText, urgent)
+}
+
+func (h *harness) enqueueKind(session fsp.SessionID, text string, kind fsp.OutKind, urgent bool) {
+	h.t.Helper()
 	msg := fsp.Outbound{
 		Endpoint: testEndpoint,
 		Session:  session,
-		Kind:     fsp.OutText,
+		Kind:     kind,
 		Text:     text,
 		Urgent:   urgent,
 	}
@@ -674,17 +745,23 @@ func TestRetryUnknownSameKey(t *testing.T) {
 	}
 }
 
-func TestNoWindowRejected(t *testing.T) {
+// TestNoWindowHeld replaces P1's TestNoWindowRejected: from P2 on, a message
+// with nowhere to go waits for the window to reopen instead of being dropped
+// (spec-p2 3.6).
+func TestNoWindowHeld(t *testing.T) {
 	h := newRunning(t, nil)
 	// No OpenWindow: the endpoint never replied to anything.
 	h.enqueue(sessionA, "unsolicited", true)
 
-	h.waitFor("row 1 to be rejected", func() bool {
-		return h.store.row(t, 1).State == fsp.DeliveryRejected
+	h.waitFor("row 1 to be held", func() bool {
+		return h.store.row(t, 1).State == fsp.DeliveryHeld
 	})
 	h.quiesce()
 	if n := h.im.count(); n != 0 {
 		t.Errorf("sent %d messages without a window, want 0: %q", n, h.sentTexts())
+	}
+	if at, ok := h.store.heldTime(1); !ok || !at.Equal(h.clk.Now()) {
+		t.Errorf("held_at = %s (recorded %v), want the clock's %s", at, ok, h.clk.Now())
 	}
 	audits := h.store.auditKinds()
 	if len(audits) != 1 {
@@ -756,10 +833,16 @@ func TestRowsPersisted(t *testing.T) {
 	}
 }
 
-func TestFlushHeldIsNoOp(t *testing.T) {
+// TestFlushHeldWithoutBacklog keeps P1's contract for the empty case: nothing
+// held, nothing said.
+func TestFlushHeldWithoutBacklog(t *testing.T) {
 	h := newBox(t, nil)
+	h.open("ctx-1")
 	if err := h.box.FlushHeld(h.ctx, testEndpoint); err != nil {
 		t.Errorf("FlushHeld: %v", err)
+	}
+	if n := h.im.count(); n != 0 {
+		t.Errorf("sent %d messages with nothing held, want 0: %q", n, h.sentTexts())
 	}
 }
 
@@ -808,19 +891,74 @@ func TestRejectedNotRetried(t *testing.T) {
 	}
 }
 
-// --- P2 placeholders -------------------------------------------------------
-// The Store interface grew held messages and long-output rows in P2.
+// --- P2 -------------------------------------------------------------------
+// Held messages, long-output rows and the session numbers a digest prints.
 
-func (m *memStore) HoldOutbox(ctx context.Context, id int64, at time.Time) error {
-	return fsp.ErrUnsupported
+func (s *memStore) HoldOutbox(_ context.Context, id int64, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id < 1 || int(id) > len(s.rows) {
+		return fsp.ErrNotFound
+	}
+	s.rows[id-1].State = fsp.DeliveryHeld
+	s.heldAt[id] = at
+	return nil
 }
 
-func (m *memStore) AddLongOutput(ctx context.Context, lo ports.LongOutput) (int64, error) {
-	return 0, fsp.ErrUnsupported
+func (s *memStore) AddLongOutput(_ context.Context, lo ports.LongOutput) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.longSeq++
+	lo.ID = s.longSeq
+	s.longs = append(s.longs, lo)
+	return lo.ID, nil
 }
 
-func (m *memStore) LongOutputs(ctx context.Context, ep fsp.EndpointID, limit int) ([]ports.LongOutput, error) {
-	return nil, fsp.ErrUnsupported
+// LongOutputs returns an endpoint's files newest first, as the real store does.
+func (s *memStore) LongOutputs(_ context.Context, ep fsp.EndpointID, limit int) ([]ports.LongOutput, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []ports.LongOutput
+	for i := len(s.longs) - 1; i > -1; i-- {
+		if s.longs[i].Endpoint != ep {
+			continue
+		}
+		out = append(out, s.longs[i])
+		if limit > 0 && len(out) == limit {
+			break
+		}
+	}
+	return out, nil
 }
 
-func (m *memStore) DeleteLongOutput(ctx context.Context, id int64) error { return fsp.ErrUnsupported }
+func (s *memStore) DeleteLongOutput(_ context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, lo := range s.longs {
+		if lo.ID == id {
+			s.longs = append(s.longs[:i], s.longs[i+1:]...)
+			return nil
+		}
+	}
+	return fsp.ErrNotFound
+}
+
+// bind gives a session the number the operator sees in /ls.
+func (s *memStore) bind(session fsp.SessionID, slot int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.slots = append(s.slots, ports.Binding{Endpoint: testEndpoint, Session: session, Slot: slot})
+}
+
+func (s *memStore) heldTime(id int64) (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	at, ok := s.heldAt[id]
+	return at, ok
+}
+
+func (s *memStore) longOutputs() []ports.LongOutput {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]ports.LongOutput(nil), s.longs...)
+}

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,7 +27,22 @@ const FileName = "config.toml"
 const (
 	minMergeInterval = 100 * time.Millisecond
 	minReplyBudget   = 2
+	minWindowTTL     = time.Second
 )
+
+// DefaultWindowTTL is how long a reply window is assumed to last. The measured
+// context_token lifetime minus 30 minutes belongs here; until that measurement
+// exists, spec-p2 3.2 fixes it at 23 hours.
+const DefaultWindowTTL = 23 * time.Hour
+
+// The two ways of handling a turn whose text is too long for chat.
+const (
+	LongOutputFile  = "file"
+	LongOutputSplit = "split"
+)
+
+// Channels is every wake-up channel notify.enabled may name.
+var Channels = []string{"ntfy", "bark", "webhook", "email"}
 
 var agentNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
@@ -54,6 +71,7 @@ func Default() Config {
 			ChannelVersion: ilinkwire.DefaultChannelVersion,
 			Render:         "plain",
 			Approvers:      []string{"owner"},
+			MaxMediaMB:     20,
 		},
 		Workspace: WorkspaceConfig{},
 		Agents: []AgentConfig{
@@ -71,6 +89,18 @@ func Default() Config {
 			ReplyBudget:         8,
 			LongOutputThreshold: 1500,
 			SendTimeout:         Duration{15 * time.Second},
+			WindowTTL:           Duration{DefaultWindowTTL},
+			DigestMax:           5,
+			FileKeep:            20,
+			LongOutput:          LongOutputFile,
+		},
+		Handoff: HandoffConfig{LookbackDays: 7},
+		Notify: NotifyConfig{
+			Events:      []string{"approval_pending", "turn_finished", "im_offline"},
+			MinInterval: Duration{10 * time.Minute},
+			Ntfy:        NtfyConfig{URL: "https://ntfy.sh"},
+			Bark:        BarkConfig{URL: "https://api.day.app"},
+			Email:       EmailConfig{Port: 587},
 		},
 		Registry: RegistryConfig{SnapshotOnly: true},
 		Limits:   LimitsConfig{MaxManagedSessions: 3},
@@ -118,18 +148,36 @@ func decode(data []byte) (Config, error) {
 	if hasKey(raw, "policy", "rules") {
 		c.Policy.Rules = nil
 	}
+	if hasKey(raw, "notify", "enabled") {
+		c.Notify.Enabled = nil
+	}
+	if hasKey(raw, "notify", "events") {
+		c.Notify.Events = nil
+	}
+	if hasKey(raw, "notify", "email", "to") {
+		c.Notify.Email.To = nil
+	}
+	if hasKey(raw, "handoff", "profiles") {
+		c.Handoff.Profiles = nil
+	}
 	if err := toml.Unmarshal(data, &c); err != nil {
 		return Config{}, err
 	}
 	return c, nil
 }
 
-func hasKey(raw map[string]any, table, key string) bool {
-	t, ok := raw[table].(map[string]any)
-	if !ok {
-		return false
+// hasKey reports whether the decoded file spells out the given path, so that a
+// list it sets can replace the default rather than appending to it.
+func hasKey(raw map[string]any, path ...string) bool {
+	node := raw
+	for _, table := range path[:len(path)-1] {
+		child, ok := node[table].(map[string]any)
+		if !ok {
+			return false
+		}
+		node = child
 	}
-	_, ok = t[key]
+	_, ok := node[path[len(path)-1]]
 	return ok
 }
 
@@ -170,12 +218,25 @@ func (c Config) Validate() error {
 			return fmt.Errorf("agents[%d].name: %q is used more than once", i, a.Name)
 		}
 		seen[a.Name] = true
-		hasCommand := len(a.Command) != 0
-		switch {
-		case a.Registry == "" && !hasCommand:
-			return fmt.Errorf("agents[%d]: %q sets neither registry nor command", i, a.Name)
-		case a.Registry != "" && hasCommand:
-			return fmt.Errorf("agents[%d]: %q sets both registry and command", i, a.Name)
+		// registry, command and server are three ways of saying where the agent
+		// comes from; exactly one of them belongs in an entry.
+		sources := 0
+		for _, set := range []bool{a.Registry != "", len(a.Command) != 0, a.Server != nil} {
+			if set {
+				sources++
+			}
+		}
+		switch sources {
+		case 1:
+		case 0:
+			return fmt.Errorf("agents[%d]: %q sets none of registry, command and server", i, a.Name)
+		default:
+			return fmt.Errorf("agents[%d]: %q sets more than one of registry, command and server", i, a.Name)
+		}
+		if a.Server != nil {
+			if err := a.Server.validate(); err != nil {
+				return fmt.Errorf("agents[%d].server.%w", i, err)
+			}
 		}
 	}
 	if c.DefaultAgent == "" {
@@ -202,6 +263,17 @@ func (c Config) Validate() error {
 	}
 	if c.Outbox.MergeInterval.Duration < minMergeInterval {
 		return fmt.Errorf("outbox.merge_interval: %s is below %s", c.Outbox.MergeInterval.Duration, minMergeInterval)
+	}
+	if c.Outbox.WindowTTL.Duration < minWindowTTL {
+		return fmt.Errorf("outbox.window_ttl: %s is below %s", c.Outbox.WindowTTL.Duration, minWindowTTL)
+	}
+	switch c.Outbox.LongOutput {
+	case LongOutputFile, LongOutputSplit:
+	default:
+		return fmt.Errorf("outbox.long_output: %q is neither %q nor %q", c.Outbox.LongOutput, LongOutputFile, LongOutputSplit)
+	}
+	if err := c.Notify.validate(); err != nil {
+		return err
 	}
 	if len(c.Workspace.Roots) == 0 {
 		return errors.New("workspace.roots: at least one directory is required")
@@ -266,4 +338,70 @@ func expandPath(p string) (string, error) {
 		return "", fmt.Errorf("absolute %q: %w", p, err)
 	}
 	return abs, nil
+}
+
+// validate checks the fields of one service-backed agent.
+func (s ServerConfig) validate() error {
+	switch s.Kind {
+	case "opencode", "qwen":
+	default:
+		return fmt.Errorf("kind: %q is neither \"opencode\" nor \"qwen\"", s.Kind)
+	}
+	if s.URL == "" {
+		return errors.New("url: must be set")
+	}
+	u, err := url.Parse(s.URL)
+	if err != nil {
+		return fmt.Errorf("url: %q: %w", s.URL, err)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("url: %q has no host", s.URL)
+	}
+	// Ferry only ever drives a service on this machine; a remote address would
+	// send prompts off the box.
+	if host != "localhost" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return fmt.Errorf("url: %q is not a loopback address (127.0.0.1, ::1 or localhost)", s.URL)
+		}
+	}
+	return nil
+}
+
+// validate checks that every channel named in notify.enabled has the fields it
+// needs to send anything.
+func (n NotifyConfig) validate() error {
+	for i, name := range n.Enabled {
+		var missing string
+		switch name {
+		case "ntfy":
+			if n.Ntfy.Topic == "" {
+				missing = "notify.ntfy.topic"
+			}
+		case "bark":
+			if n.Bark.KeyEnv == "" {
+				missing = "notify.bark.key_env"
+			}
+		case "webhook":
+			if n.Webhook.URL == "" {
+				missing = "notify.webhook.url"
+			}
+		case "email":
+			switch {
+			case n.Email.Host == "":
+				missing = "notify.email.host"
+			case n.Email.From == "":
+				missing = "notify.email.from"
+			case len(n.Email.To) == 0:
+				missing = "notify.email.to"
+			}
+		default:
+			return fmt.Errorf("notify.enabled[%d]: %q is not one of %s", i, name, strings.Join(Channels, ", "))
+		}
+		if missing != "" {
+			return fmt.Errorf("notify.enabled lists %q but %s is empty", name, missing)
+		}
+	}
+	return nil
 }
