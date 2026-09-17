@@ -92,13 +92,24 @@ type TextItem struct {
 }
 
 type ImageItem struct {
-	Media *CDNMedia `json:"media,omitempty"`
+	Media       *CDNMedia `json:"media,omitempty"`
+	ThumbMedia  *CDNMedia `json:"thumb_media,omitempty"`
+	AESKey      string    `json:"aeskey,omitempty"`
+	URL         string    `json:"url,omitempty"`
+	MidSize     int64     `json:"mid_size,omitempty"`
+	ThumbSize   int64     `json:"thumb_size,omitempty"`
+	ThumbHeight int       `json:"thumb_height,omitempty"`
+	ThumbWidth  int       `json:"thumb_width,omitempty"`
+	HDSize      int64     `json:"hd_size,omitempty"`
 }
 
 type VoiceItem struct {
-	Media    *CDNMedia `json:"media,omitempty"`
-	PlayTime int       `json:"playtime,omitempty"`
-	Text     string    `json:"text,omitempty"` // transcription provided by WeChat
+	Media         *CDNMedia `json:"media,omitempty"`
+	PlayTime      int       `json:"playtime,omitempty"`
+	Text          string    `json:"text,omitempty"` // transcription provided by WeChat
+	EncodeType    int       `json:"encode_type,omitempty"`
+	BitsPerSample int       `json:"bits_per_sample,omitempty"`
+	SampleRate    int       `json:"sample_rate,omitempty"`
 }
 
 type FileItem struct {

@@ -16,6 +16,21 @@
 | Qwen 守护进程的事件流格式、认证、`X-Qwen-Client-Id` 规则 | Qwen Code 仓库 `docs/developers/daemon-rest-api-reference.md` 与 `qwen-serve-protocol.md` | 3.5 |
 | P1 实测值（回复上限、context_token 时长） | 00 总览第 7 节 | 3.2 的 `window_ttl` 默认值 |
 
+### 0.1 核实结果（2026-09-17，总管填写）
+
+| 项 | 结果 |
+| --- | --- |
+| claude-acp、codex-acp 的恢复参数 | ✅ 本机 `--help` 核实，见 3.3「依据」列 |
+| OpenCode 认证 | ✅ HTTP Basic，见 3.5 |
+| Qwen 认证、`X-Qwen-Client-Id`、事件 schema | ✅ 官方协议文档核实，见 3.5 |
+| OpenCode 事件名 | ⚠️ 只有社区来源的候选名，**按未核实对待**（见 3.5 与 5.3） |
+| OpenCode 权限 `response` 取值 | ❌ 仍待核实 |
+| kimi、qwen-code、opencode 的进程匹配与「一档可用」 | ❌ 本机未装这三个 agent，无法核实；3.3 相应项保持待核实，`Resume` 留空、`ferry back` 返回不支持 |
+| P1 实测值（回复上限、`context_token` 时长） | ❌ 无第二个微信号，P1 人工验收未做；`outbox.window_ttl` 用 3.2 规定的未实测默认值 **23h** |
+
+未核实项不阻塞本轮：B1–B4 全部用 `ferry-fakeagent`（3.3 已定），B5/B6 用 T2 自己写的假服务。
+风险在于假服务可能与真实服务不符 —— 见 5.3 对事件映射表的隔离要求。
+
 ## 1. 问题定义
 
 **要做什么**：
@@ -262,8 +277,8 @@ topic = "ferry-your-random-topic"
 | kimi | `kimi --resume {id}` | `(^\|/)kimi( \|$)`，排除含 ` acp` 的命令行 | 待核实 | 源码确认 `--session` 与 `--resume` 为同一参数 |
 | qwen-code | `qwen --resume {id}` | 命令行含 `qwen` 且不含 `--acp` | 待核实 | 源码确认有 `--resume` |
 | opencode | 待核实 | `(^\|/)opencode( \|$)`，排除 `acp` 与 `serve` | 待核实 | 优先用二档 |
-| claude-acp | `claude --resume {id}` | `(^\|/)claude( \|$)` | 待核实 | 待核实 |
-| codex-acp | `codex resume {id}` | `(^\|/)codex( \|$)` | 待核实 | 待核实 |
+| claude-acp | `claude --resume {id}` | `(^\|/)claude( \|$)` | 待核实 | 本机 `claude --help` 核实（2026-09-17）：`--resume <session-id>` |
+| codex-acp | `codex resume {id}` | `(^\|/)codex( \|$)` | 待核实 | 本机 `codex resume --help` 核实（2026-09-17）：`codex resume [SESSION_ID]` |
 | codebuddy-code、minimax-code、qoder、glm-acp-agent | 待核实 | 待核实 | 待核实 | 待核实 |
 | fake（测试专用） | `ferry-fakeagent --resume {id}` | `ferry-fakeagent` | 是 | P0 已定 |
 
@@ -339,10 +354,10 @@ func (c *Client) Close() error
 | 恢复 | `GET /session/:id` 存在即可，无需其他调用 |
 | 列表 | `GET /session` |
 | 发送 | `POST /session/:id/prompt_async`，body `{parts: [{type: "text", text}]}`，返回 204 |
-| 事件 | `GET /global/event`（SSE），按会话 ID 过滤；文本增量、工具调用、权限请求、会话空闲的事件类型名：待核实 |
+| 事件 | `GET /event`（SSE），首事件 `server.connected`，其后为 bus 事件，按会话 ID 过滤。**候选事件名（仅社区来源，官方文档正文未列，按「未核实」对待）**：文本增量 `message.part.updated`；会话空闲 `session.idle`；错误 `session.error`；权限 `permission.asked` / `permission.updated` / `permission.replied` |
 | 取消 | `POST /session/:id/abort` |
-| 权限回复 | `POST /session/:id/permissions/:permissionID`，body `{response, remember?}`；response 的取值：待核实 |
-| 认证 | 设置了 `OPENCODE_SERVER_PASSWORD` 时的请求方式：待核实 |
+| 权限回复 | `POST /session/:id/permissions/:permissionID`，body `{response, remember?}`；**response 的取值：仍待核实**（官方文档只给字段名） |
+| 认证 | 设置了 `OPENCODE_SERVER_PASSWORD` 时走 **HTTP Basic**，用户名默认 `opencode`，密码为该环境变量的值（opencode.ai/docs/server 核实 2026-09-17） |
 
 **Qwen Code**
 
@@ -352,12 +367,12 @@ func (c *Client) Close() error
 | 新建会话 | `POST /session`，body 含 `cwd`；该目录必须已由 `qwen serve --workspace` 注册，否则返回 `400 workspace_mismatch` |
 | 恢复 | `POST /session/:id/load` 或 `POST /session/:id/resume`，按 `/capabilities` 选择 |
 | 发送 | `POST /session/:id/prompt` |
-| 事件 | `GET /session/:id/events`（SSE），事件格式：待核实 |
+| 事件 | `GET /session/:id/events`（SSE）。事件名与字段依 `docs/developers/daemon/09-event-schema.md` 核实（2026-09-17）：内容增量 `session_update`（`sessionUpdate`、`content?`）；权限 `permission_request`（`requestId`、`sessionId`、`toolCall`、`options[]`、`originatorClientId`）与 `permission_resolved`（`requestId`、`outcome`）；轮次结束 `turn_complete`（`sessionId`、`stopReason`、`promptId?`）；轮次出错 `turn_error`（`sessionId`、`message`、`code?`、`promptId?`）；会话终止 `session_died` / `session_closed`；流错误 `stream_error` |
 | 取消 | `POST /session/:id/cancel` |
 | 权限回复 | `POST /session/:id/permission/:requestId` |
 | 状态 | `GET /session/:id/status` |
-| 认证 | 守护进程启用 `--require-auth` 时带 `Authorization: Bearer <令牌>` |
-| 客户端标识 | `X-Qwen-Client-Id` 的取值规则：待核实 |
+| 认证 | `Authorization: Bearer <令牌>`（协议文档核实 2026-09-17：普通路由一律用 Bearer） |
+| 客户端标识 | `X-Qwen-Client-Id`：**create/load 响应给了就原样带回**，没给就不带。它是附件与归属标识，不是安全主体（协议文档核实 2026-09-17） |
 
 两种服务共同的规则：
 

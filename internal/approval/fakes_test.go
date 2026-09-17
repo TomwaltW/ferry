@@ -93,3 +93,15 @@ func (fakeI18n) T(_ fsp.Lang, key string, args map[string]any) string {
 }
 
 var _ ports.I18n = fakeI18n{}
+
+// --- P2 placeholders -------------------------------------------------------
+// The Outbox interface grew Pull, File and Held in P2. The P2 T3 task gives
+// them real behaviour and real tests; these keep P1's suite compiling.
+
+func (f *fakeOutbox) Pull(ctx context.Context, ep fsp.EndpointID) error { return fsp.ErrUnsupported }
+
+func (f *fakeOutbox) File(ctx context.Context, ep fsp.EndpointID, n int) error {
+	return fsp.ErrUnsupported
+}
+
+func (f *fakeOutbox) Held(ep fsp.EndpointID) int { return 0 }

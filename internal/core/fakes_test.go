@@ -844,3 +844,29 @@ var (
 	_ ports.AgentSession = (*fakeAgent)(nil)
 	_ ports.Store        = (*memStore)(nil)
 )
+
+// --- P2 placeholders -------------------------------------------------------
+// The Outbox interface grew Pull, File and Held in P2. The P2 T3 task gives
+// them real behaviour and real tests; these keep P1's suite compiling.
+
+func (f *fakeOutbox) Pull(ctx context.Context, ep fsp.EndpointID) error { return fsp.ErrUnsupported }
+
+func (f *fakeOutbox) File(ctx context.Context, ep fsp.EndpointID, n int) error {
+	return fsp.ErrUnsupported
+}
+
+func (f *fakeOutbox) Held(ep fsp.EndpointID) int { return 0 }
+
+func (m *memStore) HoldOutbox(ctx context.Context, id int64, at time.Time) error {
+	return fsp.ErrUnsupported
+}
+
+func (m *memStore) AddLongOutput(ctx context.Context, lo ports.LongOutput) (int64, error) {
+	return 0, fsp.ErrUnsupported
+}
+
+func (m *memStore) LongOutputs(ctx context.Context, ep fsp.EndpointID, limit int) ([]ports.LongOutput, error) {
+	return nil, fsp.ErrUnsupported
+}
+
+func (m *memStore) DeleteLongOutput(ctx context.Context, id int64) error { return fsp.ErrUnsupported }

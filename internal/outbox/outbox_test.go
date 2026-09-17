@@ -807,3 +807,20 @@ func TestRejectedNotRetried(t *testing.T) {
 		t.Errorf("audits = %+v, want one outbound_failed", audits)
 	}
 }
+
+// --- P2 placeholders -------------------------------------------------------
+// The Store interface grew held messages and long-output rows in P2.
+
+func (m *memStore) HoldOutbox(ctx context.Context, id int64, at time.Time) error {
+	return fsp.ErrUnsupported
+}
+
+func (m *memStore) AddLongOutput(ctx context.Context, lo ports.LongOutput) (int64, error) {
+	return 0, fsp.ErrUnsupported
+}
+
+func (m *memStore) LongOutputs(ctx context.Context, ep fsp.EndpointID, limit int) ([]ports.LongOutput, error) {
+	return nil, fsp.ErrUnsupported
+}
+
+func (m *memStore) DeleteLongOutput(ctx context.Context, id int64) error { return fsp.ErrUnsupported }

@@ -83,6 +83,12 @@ type Store interface {
 	TakePairing(ctx context.Context, code string, now time.Time) (Pairing, error) // taking deletes it; missing or expired yields fsp.ErrNotFound
 	CountPairings(ctx context.Context, ep fsp.EndpointID, now time.Time) (int, error)
 
+	// HoldOutbox marks a row held and records when.
+	HoldOutbox(ctx context.Context, id int64, at time.Time) error
+	AddLongOutput(ctx context.Context, lo LongOutput) (int64, error)
+	LongOutputs(ctx context.Context, ep fsp.EndpointID, limit int) ([]LongOutput, error) // newest first
+	DeleteLongOutput(ctx context.Context, id int64) error
+
 	Audit(ctx context.Context, e AuditEntry) error
 	Close() error
 }

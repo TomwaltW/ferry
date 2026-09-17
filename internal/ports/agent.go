@@ -12,6 +12,15 @@ type SessionSpec struct {
 	Command []string // executable and arguments
 	Cwd     string   // absolute path
 	Env     []string // KEY=VALUE, already filtered against the whitelist
+	Server  *ServerSpec
+}
+
+// ServerSpec describes an agent that is already running as a local service.
+// When it is set, Command is empty and the server driver takes over.
+type ServerSpec struct {
+	Kind   string // opencode | qwen
+	URL    string // loopback addresses only
+	Secret string // read from secret_env, may be empty
 }
 
 type Caps struct{ Load, Resume, List, Cancel, Config bool }

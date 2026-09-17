@@ -26,6 +26,8 @@ type Deps struct {
 	Outbox    ports.Outbox
 	ACL       ports.ACL
 	Approvals ports.Approvals
+	Handoff   ports.Handoff
+	Waker     ports.Waker
 	Commands  ports.Commands
 	I18n      ports.I18n
 	Clock     clock.Clock

@@ -12,8 +12,26 @@ type Outbox interface {
 	// resets the reply budget for that endpoint.
 	OpenWindow(ep fsp.EndpointID, replyCtx string, inboundAt time.Time)
 	Enqueue(ctx context.Context, msg fsp.Outbound) error
-	FlushHeld(ctx context.Context, ep fsp.EndpointID) error // no-op in P1
-	Run(ctx context.Context) error                          // merge and send loop, blocks until ctx ends
+	FlushHeld(ctx context.Context, ep fsp.EndpointID) error
+	Run(ctx context.Context) error // merge and send loop, blocks until ctx ends
+	// Pull sends the next batch of held messages, or replies
+	// outbox.nothing_held when there is nothing waiting.
+	Pull(ctx context.Context, ep fsp.EndpointID) error
+	// File resends the nth long-output file, 1 being the most recent.
+	File(ctx context.Context, ep fsp.EndpointID, n int) error
+	// Held reports how many messages are currently held back.
+	Held(ep fsp.EndpointID) int
+}
+
+// Waker is the one way out of chat: it nudges the operator through a side
+// channel when the reply window is closed.
+type Waker interface {
+	// Wake sends a reminder according to the configuration. Repeats of the same
+	// kind to the same endpoint are rate limited by notify.min_interval.
+	// kind is one of approval_pending, turn_finished, im_offline.
+	// args carries only non-sensitive values such as a session number: never a
+	// message body, tool argument, command or path.
+	Wake(ctx context.Context, ep fsp.EndpointID, kind string, args map[string]any)
 }
 
 type ACL interface {
