@@ -100,8 +100,8 @@ func newWithSnapshot(cfg config.RegistryConfig, agents []config.AgentConfig, hom
 		if _, dup := byName[a.Name]; dup {
 			return nil, fmt.Errorf("registry: agent %q is configured twice", a.Name)
 		}
-		if (a.Registry == "") == (len(a.Command) == 0) {
-			return nil, fmt.Errorf("registry: agent %q must set exactly one of registry and command", a.Name)
+		if sources(a) != 1 {
+			return nil, fmt.Errorf("registry: agent %q must set exactly one of registry, command and server", a.Name)
 		}
 		byName[a.Name] = a
 	}
@@ -131,6 +131,10 @@ func (r *resolver) Resolve(ctx context.Context, agent string) (ports.SessionSpec
 		return ports.SessionSpec{}, fmt.Errorf("registry: agent %q: %w", agent, fsp.ErrNotFound)
 	}
 
+	if ac.Server != nil {
+		return serverSpec(ac), nil
+	}
+
 	l, err := r.plan(ac)
 	if err != nil {
 		return ports.SessionSpec{}, err
@@ -156,6 +160,11 @@ func (r *resolver) Resolve(ctx context.Context, agent string) (ports.SessionSpec
 func (r *resolver) Agents(ctx context.Context) []ports.AgentInfo {
 	out := make([]ports.AgentInfo, 0, len(r.agents))
 	for _, ac := range r.agents {
+		if ac.Server != nil {
+			out = append(out, r.serverInfo(ctx, ac))
+			continue
+		}
+
 		info := ports.AgentInfo{Name: ac.Name, Display: ac.Name, Source: "command"}
 		if ac.Registry != "" {
 			info.Source = "registry"
