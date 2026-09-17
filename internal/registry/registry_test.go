@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -37,8 +38,15 @@ func emptyPath(t *testing.T) string {
 // Nothing runs it; the resolver only has to find it.
 func fakeExe(t *testing.T, dir, name string) string {
 	t.Helper()
+	// Windows only treats a file as executable via PATHEXT, and looks it up
+	// through the extension rather than the permission bits.
+	body, mode := "#!/bin/sh\nexit 0\n", os.FileMode(0o755)
+	if runtime.GOOS == "windows" {
+		name += ".bat"
+		body, mode = "@echo off\r\nexit /b 0\r\n", os.FileMode(0o644)
+	}
 	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(p, []byte(body), mode); err != nil {
 		t.Fatalf("write %s: %v", p, err)
 	}
 	return p

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -662,7 +663,7 @@ func TestResumeFlag(t *testing.T) {
 	if testing.Short() {
 		t.Skip("building the binary is too slow for -short")
 	}
-	bin := filepath.Join(t.TempDir(), "ferry-fakeagent")
+	bin := filepath.Join(t.TempDir(), "ferry-fakeagent"+exeSuffix)
 
 	build := exec.CommandContext(t.Context(), "go", "build", "-o", bin, "github.com/TomwaltW/ferry/cmd/ferry-fakeagent")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -691,3 +692,11 @@ func assertRequestError(t *testing.T, err error, code int) {
 		t.Errorf("error code = %d, want %d", reqErr.Code, code)
 	}
 }
+
+// exeSuffix is what Windows needs on a built binary before it can be executed.
+var exeSuffix = func() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
+}()

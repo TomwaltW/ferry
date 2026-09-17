@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -197,16 +198,20 @@ func TestCredentialsFileFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat %s: %v", dir, err)
 	}
-	if got := di.Mode().Perm(); got != 0o700 {
-		t.Errorf("directory mode = %o, want 700", got)
+	if runtime.GOOS != "windows" { // Windows has no Unix permission bits
+		if got := di.Mode().Perm(); got != 0o700 {
+			t.Errorf("directory mode = %o, want 700", got)
+		}
 	}
 	path := filepath.Join(dir, "wechat.json")
 	fi, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat %s: %v", path, err)
 	}
-	if got := fi.Mode().Perm(); got != 0o600 {
-		t.Errorf("file mode = %o, want 600", got)
+	if runtime.GOOS != "windows" {
+		if got := fi.Mode().Perm(); got != 0o600 {
+			t.Errorf("file mode = %o, want 600", got)
+		}
 	}
 
 	got, err := LoadCredentials(home, fsp.PlatformWeChat)
@@ -225,8 +230,10 @@ func TestCredentialsFileFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat %s: %v", path, err)
 	}
-	if got := fi.Mode().Perm(); got != 0o600 {
-		t.Errorf("file mode after a second save = %o, want 600", got)
+	if runtime.GOOS != "windows" {
+		if got := fi.Mode().Perm(); got != 0o600 {
+			t.Errorf("file mode after a second save = %o, want 600", got)
+		}
 	}
 
 	if err := DeleteCredentials(home, fsp.PlatformWeChat); err != nil {
