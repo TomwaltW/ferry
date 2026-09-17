@@ -28,9 +28,10 @@ func (b *box) pump(ctx context.Context) {
 	}
 }
 
-// pumpEndpoint applies the budget rules of spec 5.5 to one endpoint:
-// urgent messages go out while a reply is left, non-urgent ones merge per
-// session and always leave one reply for an urgent message.
+// pumpEndpoint applies the budget rules of spec-p1 5.5 to one endpoint: urgent
+// messages go out while a reply is left, non-urgent ones merge per session and
+// always leave one reply for an urgent message. Without a window every message
+// is held instead, urgent ones included (spec-p2 3.6).
 func (b *box) pumpEndpoint(ctx context.Context, ep fsp.EndpointID) error {
 	rows, err := b.store.OutboxByState(ctx, ep, fsp.DeliveryQueued)
 	if err != nil {
@@ -40,14 +41,12 @@ func (b *box) pumpEndpoint(ctx context.Context, ep fsp.EndpointID) error {
 		return nil
 	}
 
-	win, err := b.store.LoadWindow(ctx, ep)
-	switch {
-	case errors.Is(err, fsp.ErrNotFound):
-		return b.rejectAll(ctx, ep, rows, "no reply window")
-	case err != nil:
-		return fmt.Errorf("load window: %w", err)
-	case win.ReplyCtx == "":
-		return b.rejectAll(ctx, ep, rows, "reply window without a reply context")
+	win, reason, open, err := b.window(ctx, ep)
+	if err != nil {
+		return err
+	}
+	if !open {
+		return b.holdAll(ctx, ep, rows, reason)
 	}
 
 	var urgent, normal []ports.OutboxRow
@@ -63,14 +62,11 @@ func (b *box) pumpEndpoint(ctx context.Context, ep fsp.EndpointID) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		budget := b.cfg.ReplyBudget - win.Used
-		if budget < 1 {
-			// P2 redelivers held messages; P1 only stops sending.
-			if err := b.store.UpdateOutbox(ctx, u.ID, fsp.DeliveryHeld, u.Attempts, b.clk.Now()); err != nil {
-				return fmt.Errorf("hold %d: %w", u.ID, err)
+		if b.budget(win) < 1 {
+			// FlushHeld redelivers it the next time the operator writes.
+			if err := b.hold(ctx, ep, u, reasonBudget); err != nil {
+				return err
 			}
-			b.log.Warn("outbox: reply budget exhausted, message held",
-				"endpoint", ep.String(), "row", u.ID)
 			continue
 		}
 		// Anything non-urgent still waiting for this session rides along at the
@@ -88,7 +84,7 @@ func (b *box) pumpEndpoint(ctx context.Context, ep fsp.EndpointID) error {
 		consumed := make([]ports.OutboxRow, 0, len(merged)+1)
 		consumed = append(consumed, merged...)
 		consumed = append(consumed, u)
-		if err := b.deliver(ctx, ep, &win, u, consumed, budget); err != nil {
+		if err := b.deliver(ctx, ep, &win, u, consumed, b.budget(win)); err != nil {
 			return err
 		}
 	}
@@ -102,7 +98,7 @@ func (b *box) pumpEndpoint(ctx context.Context, ep fsp.EndpointID) error {
 		if now.Sub(group[0].CreatedAt) < b.cfg.MergeInterval.Duration {
 			continue
 		}
-		budget := b.cfg.ReplyBudget - win.Used
+		budget := b.budget(win)
 		// One reply always stays reserved for an urgent message.
 		if budget < 2 {
 			continue
@@ -132,36 +128,96 @@ func bySession(rows []ports.OutboxRow) [][]ports.OutboxRow {
 	return out
 }
 
-func (b *box) rejectAll(ctx context.Context, ep fsp.EndpointID, rows []ports.OutboxRow, reason string) error {
-	now := b.clk.Now()
+func (b *box) holdAll(ctx context.Context, ep fsp.EndpointID, rows []ports.OutboxRow, reason string) error {
 	for _, r := range rows {
-		if err := b.store.UpdateOutbox(ctx, r.ID, fsp.DeliveryRejected, r.Attempts, now); err != nil {
-			return fmt.Errorf("reject %d: %w", r.ID, err)
+		if err := b.hold(ctx, ep, r, reason); err != nil {
+			return err
 		}
-		b.audit(ctx, ep, r.Msg.Session, reason)
 	}
 	return nil
 }
 
+// hold parks one message until a reply window reopens. An urgent message the
+// operator cannot see is also worth a wake-up.
+func (b *box) hold(ctx context.Context, ep fsp.EndpointID, r ports.OutboxRow, reason string) error {
+	if err := b.store.HoldOutbox(ctx, r.ID, b.clk.Now()); err != nil {
+		return fmt.Errorf("hold %d: %w", r.ID, err)
+	}
+	b.log.Warn("outbox: message held", "endpoint", ep.String(), "row", r.ID, "reason", reason)
+	b.audit(ctx, ep, r.Msg.Session, "held: "+reason)
+	if r.Msg.Urgent {
+		b.wakeFor(ctx, ep, r.Msg)
+	}
+	return nil
+}
+
+// wakeFor raises the out-of-band reminder for a held urgent message. The
+// arguments carry the session number and nothing else: a wake-up travels over a
+// third-party service (spec-p2 3.1).
+func (b *box) wakeFor(ctx context.Context, ep fsp.EndpointID, msg fsp.Outbound) {
+	if b.waker == nil {
+		return
+	}
+	kind := wakeFinished
+	if msg.Kind == fsp.OutApproval {
+		kind = wakeApproval
+	}
+	args := map[string]any{}
+	if slot, ok := b.slot(ctx, ep, msg.Session); ok {
+		args["Slot"] = slot
+	}
+	b.waker.Wake(ctx, ep, kind, args)
+}
+
+// slot is the session's number in this chat, the one the operator sees in /ls.
+func (b *box) slot(ctx context.Context, ep fsp.EndpointID, session fsp.SessionID) (int, bool) {
+	if session == "" {
+		return 0, false
+	}
+	bindings, err := b.store.Bindings(ctx, ep)
+	if err != nil {
+		b.log.Debug("outbox: bindings", "endpoint", ep.String(), "err", err)
+		return 0, false
+	}
+	for _, bd := range bindings {
+		if bd.Session == session {
+			return bd.Slot, true
+		}
+	}
+	return 0, false
+}
+
 // deliver sends the text of consumed as maxParts messages at most, then writes
-// the outcome back to every row it consumed.
+// the outcome back to every row it consumed. A turn too long for chat becomes a
+// file instead, when the configuration asks for one.
 func (b *box) deliver(ctx context.Context, ep fsp.EndpointID, win *ports.Window, primary ports.OutboxRow, consumed []ports.OutboxRow, maxParts int) error {
-	parts := b.segments(ep, joinTexts(consumed), maxParts)
+	text := joinTexts(consumed)
+	attempts := 0
+	spent := 0
+
+	if b.fileWanted(primary, text, maxParts) {
+		st, tries, replies, done := b.sendAsFile(ctx, ep, win, primary, text)
+		attempts += tries
+		spent += replies
+		if done || st != fsp.DeliveryAccepted {
+			return b.finish(ctx, consumed, st, attempts)
+		}
+		// The file itself did not get through; the text goes out in pieces.
+	}
 
 	state := fsp.DeliveryAccepted
-	attempts := 0
-	for i, part := range parts {
+	for i, part := range b.segments(ep, text, maxParts-spent) {
 		msg := primary.Msg
 		msg.Text = part
+		msg.Kind = fsp.OutText
 		msg.DedupeKey = dedupeKey(primary, i)
 
 		st, tries := b.send(ctx, ep, win, msg)
 		attempts += tries
 		if st == fsp.DeliveryAccepted || st == fsp.DeliveryUnknown {
 			// An unknown send may well have arrived, so it spends a reply too.
-			win.Used++
-			if err := b.store.SaveWindow(ctx, *win); err != nil {
-				return fmt.Errorf("save window: %w", err)
+			if err := b.spend(ctx, win); err != nil {
+				return err
 			}
 		}
 		if st != fsp.DeliveryAccepted {
@@ -169,7 +225,11 @@ func (b *box) deliver(ctx context.Context, ep fsp.EndpointID, win *ports.Window,
 			break
 		}
 	}
+	return b.finish(ctx, consumed, state, attempts)
+}
 
+// finish writes one outcome back to every row a delivery consumed.
+func (b *box) finish(ctx context.Context, consumed []ports.OutboxRow, state fsp.DeliveryState, attempts int) error {
 	now := b.clk.Now()
 	for _, r := range consumed {
 		if err := b.store.UpdateOutbox(ctx, r.ID, state, r.Attempts+attempts, now); err != nil {
@@ -178,6 +238,36 @@ func (b *box) deliver(ctx context.Context, ep fsp.EndpointID, win *ports.Window,
 	}
 	return nil
 }
+
+// spend books one reply against the window and saves it.
+func (b *box) spend(ctx context.Context, win *ports.Window) error {
+	win.Used++
+	if err := b.store.SaveWindow(ctx, *win); err != nil {
+		return fmt.Errorf("save window: %w", err)
+	}
+	return nil
+}
+
+// sendOwn sends a message the outbox composed itself — a digest, a notice, a
+// resent file — which has no queue row of its own.
+func (b *box) sendOwn(ctx context.Context, ep fsp.EndpointID, win *ports.Window, msg fsp.Outbound) error {
+	msg.Endpoint = ep
+	if msg.DedupeKey == "" {
+		msg.DedupeKey = fmt.Sprintf("ob-sys-%d-%d", win.OpenedAt.UnixMilli(), b.seq.Add(1))
+	}
+	st, _ := b.send(ctx, ep, win, msg)
+	if st == fsp.DeliveryAccepted || st == fsp.DeliveryUnknown {
+		if err := b.spend(ctx, win); err != nil {
+			return err
+		}
+	}
+	if st != fsp.DeliveryAccepted {
+		return fmt.Errorf("outbox: send %s: %w", msg.Kind, errState(st))
+	}
+	return nil
+}
+
+func errState(st fsp.DeliveryState) error { return fmt.Errorf("delivery %s", st) }
 
 // send performs one message, retrying an unknown outcome with the same dedupe
 // key so that the platform discards a duplicate.

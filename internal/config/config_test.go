@@ -16,6 +16,9 @@ import (
 	"github.com/TomwaltW/ferry/internal/fsp"
 )
 
+// loopbackURL is the address a service-backed agent is allowed to use.
+const loopbackURL = "http://127.0.0.1:4096"
+
 // withRoot returns Default with workspace.roots pointing at a directory that
 // exists, which is the one default Validate cannot satisfy on its own.
 func withRoot(t *testing.T) Config {
@@ -73,6 +76,37 @@ func TestDefaultValid(t *testing.T) {
 	if d.Limits.MaxManagedSessions != 3 {
 		t.Errorf("limits.max_managed_sessions = %d, want 3", d.Limits.MaxManagedSessions)
 	}
+	// P2 defaults.
+	if d.Outbox.WindowTTL.Duration != 23*time.Hour {
+		t.Errorf("outbox.window_ttl = %s, want 23h (spec-p2 3.2: unmeasured)", d.Outbox.WindowTTL.Duration)
+	}
+	if d.Outbox.DigestMax != 5 || d.Outbox.FileKeep != 20 {
+		t.Errorf("outbox digest_max/file_keep = %d/%d, want 5/20", d.Outbox.DigestMax, d.Outbox.FileKeep)
+	}
+	if d.Outbox.LongOutput != LongOutputFile {
+		t.Errorf("outbox.long_output = %q, want %q", d.Outbox.LongOutput, LongOutputFile)
+	}
+	if d.WeChat.MaxMediaMB != 20 {
+		t.Errorf("wechat.max_media_mb = %d, want 20", d.WeChat.MaxMediaMB)
+	}
+	if d.Handoff.LookbackDays != 7 {
+		t.Errorf("handoff.lookback_days = %d, want 7", d.Handoff.LookbackDays)
+	}
+	if len(d.Notify.Enabled) != 0 {
+		t.Errorf("notify.enabled = %q, want empty by default", d.Notify.Enabled)
+	}
+	if got := strings.Join(d.Notify.Events, ","); got != "approval_pending,turn_finished,im_offline" {
+		t.Errorf("notify.events = %q, want the three wake-up kinds", got)
+	}
+	if d.Notify.MinInterval.Duration != 10*time.Minute {
+		t.Errorf("notify.min_interval = %s, want 10m", d.Notify.MinInterval.Duration)
+	}
+	if d.Notify.Ntfy.URL != "https://ntfy.sh" || d.Notify.Bark.URL != "https://api.day.app" {
+		t.Errorf("notify endpoints = %q / %q, want the public defaults", d.Notify.Ntfy.URL, d.Notify.Bark.URL)
+	}
+	if d.Notify.Email.Port != 587 {
+		t.Errorf("notify.email.port = %d, want 587", d.Notify.Email.Port)
+	}
 }
 
 func TestLoadSample(t *testing.T) {
@@ -100,8 +134,8 @@ func TestLoadSample(t *testing.T) {
 	if c.DefaultAgent != "kimi" {
 		t.Errorf("default_agent = %q, want kimi", c.DefaultAgent)
 	}
-	if len(c.Agents) != 3 {
-		t.Fatalf("agents = %d, want the 3 from the file (defaults must be replaced, not merged)", len(c.Agents))
+	if len(c.Agents) != 5 {
+		t.Fatalf("agents = %d, want the 5 from the file (defaults must be replaced, not merged)", len(c.Agents))
 	}
 	if got := c.Agents[1].Env["OPENAI_BASE_URL"]; got != "https://example.invalid/v1" {
 		t.Errorf("agents[1].env = %q, want the sample's base URL", got)
@@ -131,6 +165,33 @@ func TestLoadSample(t *testing.T) {
 	if c.Policy.Default != "ask" {
 		t.Errorf("policy.default = %q, want the default ask", c.Policy.Default)
 	}
+
+	// The P2 half of the sample: two service-backed agents, one wake-up channel.
+	srv := c.Agents[3].Server
+	if srv == nil || srv.Kind != "opencode" || srv.URL != "http://127.0.0.1:4096" {
+		t.Fatalf("agents[3].server = %+v, want the opencode service", srv)
+	}
+	if srv.SecretEnv != "OPENCODE_SERVER_PASSWORD" {
+		t.Errorf("agents[3].server.secret_env = %q, want OPENCODE_SERVER_PASSWORD", srv.SecretEnv)
+	}
+	if srv := c.Agents[4].Server; srv == nil || srv.Kind != "qwen" {
+		t.Fatalf("agents[4].server = %+v, want the qwen service", srv)
+	}
+	if got := strings.Join(c.Notify.Enabled, ","); got != "ntfy" {
+		t.Errorf("notify.enabled = %q, want only ntfy (a list in the file replaces the default)", got)
+	}
+	if c.Notify.Ntfy.Topic != "ferry-your-random-topic" {
+		t.Errorf("notify.ntfy.topic = %q, want the sample topic", c.Notify.Ntfy.Topic)
+	}
+	if c.Notify.Ntfy.URL != "https://ntfy.sh" {
+		t.Errorf("notify.ntfy.url = %q, want the default kept", c.Notify.Ntfy.URL)
+	}
+	if c.Outbox.LongOutput != LongOutputFile {
+		t.Errorf("outbox.long_output = %q, want file", c.Outbox.LongOutput)
+	}
+	if c.Outbox.WindowTTL.Duration != 23*time.Hour {
+		t.Errorf("outbox.window_ttl = %s, want the 23h default kept", c.Outbox.WindowTTL.Duration)
+	}
 }
 
 func TestLoadMissingFile(t *testing.T) {
@@ -151,14 +212,49 @@ func TestValidateErrors(t *testing.T) {
 		{"duplicate agent", func(c *Config) {
 			c.Agents = append(c.Agents, AgentConfig{Name: "kimi", Registry: "kimi"})
 		}, "is used more than once"},
-		{"agent with neither", func(c *Config) {
+		{"agent with none", func(c *Config) {
 			c.Agents = []AgentConfig{{Name: "solo"}}
 			c.DefaultAgent = "solo"
-		}, "neither registry nor command"},
+		}, "none of registry, command and server"},
 		{"agent with both", func(c *Config) {
 			c.Agents = []AgentConfig{{Name: "solo", Registry: "kimi", Command: []string{"/bin/true"}}}
 			c.DefaultAgent = "solo"
-		}, "both registry and command"},
+		}, "more than one of registry, command and server"},
+		{"agent with registry and server", func(c *Config) {
+			c.Agents = []AgentConfig{{Name: "solo", Registry: "kimi", Server: &ServerConfig{Kind: "qwen", URL: loopbackURL}}}
+			c.DefaultAgent = "solo"
+		}, "more than one of registry, command and server"},
+		{"bad server kind", func(c *Config) {
+			c.Agents = []AgentConfig{{Name: "solo", Server: &ServerConfig{Kind: "claude", URL: loopbackURL}}}
+			c.DefaultAgent = "solo"
+		}, "agents[0].server.kind"},
+		{"server without url", func(c *Config) {
+			c.Agents = []AgentConfig{{Name: "solo", Server: &ServerConfig{Kind: "qwen"}}}
+			c.DefaultAgent = "solo"
+		}, "agents[0].server.url"},
+		{"remote server url", func(c *Config) {
+			c.Agents = []AgentConfig{{Name: "solo", Server: &ServerConfig{Kind: "qwen", URL: "http://10.0.0.5:4170"}}}
+			c.DefaultAgent = "solo"
+		}, "not a loopback address"},
+		{"server url without host", func(c *Config) {
+			c.Agents = []AgentConfig{{Name: "solo", Server: &ServerConfig{Kind: "qwen", URL: "/session"}}}
+			c.DefaultAgent = "solo"
+		}, "has no host"},
+		{"zero window ttl", func(c *Config) { c.Outbox.WindowTTL = Duration{} }, "outbox.window_ttl"},
+		{"short window ttl", func(c *Config) {
+			c.Outbox.WindowTTL = Duration{500 * time.Millisecond}
+		}, "outbox.window_ttl"},
+		{"bad long output", func(c *Config) { c.Outbox.LongOutput = "chunks" }, "outbox.long_output"},
+		{"unknown notify channel", func(c *Config) { c.Notify.Enabled = []string{"sms"} }, "notify.enabled[0]"},
+		{"ntfy without topic", func(c *Config) { c.Notify.Enabled = []string{"ntfy"} }, "notify.ntfy.topic"},
+		{"bark without key", func(c *Config) { c.Notify.Enabled = []string{"bark"} }, "notify.bark.key_env"},
+		{"webhook without url", func(c *Config) { c.Notify.Enabled = []string{"webhook"} }, "notify.webhook.url"},
+		{"email without host", func(c *Config) { c.Notify.Enabled = []string{"email"} }, "notify.email.host"},
+		{"email without recipients", func(c *Config) {
+			c.Notify.Enabled = []string{"email"}
+			c.Notify.Email.Host = "smtp.example.com"
+			c.Notify.Email.From = "ferry@example.com"
+		}, "notify.email.to"},
 		{"unknown default agent", func(c *Config) { c.DefaultAgent = "nope" }, "default_agent"},
 		{"bad policy default", func(c *Config) { c.Policy.Default = "maybe" }, "policy.default"},
 		{"bad rule action", func(c *Config) {
@@ -191,6 +287,19 @@ func TestValidateErrors(t *testing.T) {
 				t.Fatalf("Validate() = %v, want it to mention %q", err, tt.field)
 			}
 		})
+	}
+}
+
+// TestServerAgentValid pins the other half of the server rules: a loopback
+// service with nothing else set is a complete agent entry.
+func TestServerAgentValid(t *testing.T) {
+	for _, u := range []string{"http://127.0.0.1:4096", "http://localhost:4170", "http://[::1]:4096"} {
+		c := withRoot(t)
+		c.Agents = []AgentConfig{{Name: "live", Server: &ServerConfig{Kind: "opencode", URL: u}}}
+		c.DefaultAgent = "live"
+		if err := c.Validate(); err != nil {
+			t.Errorf("Validate() with server url %q = %v, want nil", u, err)
+		}
 	}
 }
 

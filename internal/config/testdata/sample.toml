@@ -20,6 +20,19 @@ env = { OPENAI_BASE_URL = "https://example.invalid/v1" }
 name = "my-agent"
 command = ["/usr/local/bin/my-agent", "--acp"]
 
+[[agents]]
+name = "opencode-live"
+[agents.server]
+kind = "opencode"
+url = "http://127.0.0.1:4096"
+secret_env = "OPENCODE_SERVER_PASSWORD"
+
+[[agents]]
+name = "qwen-live"
+[agents.server]
+kind = "qwen"
+url = "http://127.0.0.1:4170"
+
 [policy]
 approval_timeout = "10m"
 
@@ -31,6 +44,12 @@ action = "allow"
 [outbox]
 merge_interval = "30s"
 reply_budget = 8
+long_output = "file"
 
 [registry]
 npm_registry = "https://registry.npmmirror.com"
+
+[notify]
+enabled = ["ntfy"]
+[notify.ntfy]
+topic = "ferry-your-random-topic"
