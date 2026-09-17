@@ -1,0 +1,66 @@
+# Ferry
+
+[English README](README.md) · **中文** · Apache-2.0 · 状态：P0 骨架
+
+把你的编码 agent 带到聊天窗口。Ferry 是一个自托管的守护进程，让你已经在用的
+每个编码 agent 共用同一个聊天机器人 —— 于是你可以在手机上发起任务、离开键盘时
+批掉一个权限请求，回到终端再把会话接着干完。
+
+## 能做什么
+
+- **一个 bot，管所有 agent。** Claude Code、Qwen Code、Kimi CLI、OpenCode，以及
+  任何讲 ACP 的 agent，都藏在同一个聊天联系人后面。
+- **托管会话。** Ferry 负责拉起 agent、记住它的工作目录和会话 ID，把输出分片、
+  计划和工具调用流式送回聊天窗口。
+- **在聊天里审批。** 工具要改文件或执行命令时会来问你，给的是一个短审批码，
+  而不是一大段 JSON。
+- **接力。** 终端里起的会话可以从聊天接管，也能交还回去，同一时刻只有一侧在驱动。
+- **可靠投递。** 发件箱负责重试、去重，并在平台回复窗口关闭时把消息暂存住，
+  而不是直接丢掉。
+
+## 当前状态
+
+Ferry 还在施工中。P0 冻结协议类型、测试替身和双语脚手架，还没有可用的聊天入口。
+路线图是 P1 微信加托管会话，P2 终端接力加可靠投递，P3 飞书、proxy 与 PTY。
+所有面向用户的东西从第一天起就同时提供英文和中文。
+
+## 安装
+
+```sh
+go install github.com/TomwaltW/ferry/cmd/ferry@latest
+```
+
+或者从源码构建：
+
+```sh
+git clone https://github.com/TomwaltW/ferry.git
+cd ferry
+go build ./cmd/ferry
+./ferry version
+```
+
+## 快速上手
+
+暂时还没有 —— 聊天入口要到 P1 才落地。在那之前唯一可用的命令是 `ferry version`。
+完整流程正在 [docs/zh-CN/quickstart.md](docs/zh-CN/quickstart.md) 里补写。
+
+## 文档
+
+- [快速上手](docs/zh-CN/quickstart.md) —— 安装、登录、第一个会话
+- [微信入口](docs/zh-CN/wechat.md) —— 配对、陌生人门控、回复窗口
+- [Agent](docs/zh-CN/agents.md) —— 预设、驱动、工作区根目录
+- [接力](docs/zh-CN/handoff.md) —— 会话在终端与聊天之间转移
+- [安全](docs/zh-CN/security.md) —— 凭据、审批、路径限制
+- [常见问题](docs/zh-CN/faq.md)
+- [术语表](docs/glossary.md) —— 中英术语对照
+- [FSP 协议类型](spec/fsp.zh-CN.md) —— 已冻结的核心类型
+
+## 参与贡献
+
+先读 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。一句话版本：标识符、注释和
+提交信息用英文；每份面向用户的文档都要有中英两版；`go run ./scripts/check-i18n`
+必须保持绿色。
+
+## 许可证
+
+Apache-2.0，见 [LICENSE](LICENSE)。
