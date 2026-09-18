@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/TomwaltW/ferry/internal/clock"
 	"github.com/TomwaltW/ferry/internal/fsp"
 )
 
@@ -39,6 +40,9 @@ type Options struct {
 	In          io.Reader
 	Out         io.Writer
 	Log         *slog.Logger
+	// Clock is the source of time for the idle and typing rules; nil is the real
+	// one. The tests drive it themselves.
+	Clock clock.Clock
 }
 
 // Supported reports whether this platform has a pseudo terminal Ferry can use.
@@ -49,5 +53,11 @@ func Supported() bool { return runtime.GOOS != "windows" }
 // both ways and registers the session with the daemon. It returns the exit
 // code of the child, which `ferry run` exits with.
 func Run(ctx context.Context, opts Options) (int, error) {
-	return 0, fmt.Errorf("pty: Run: %w", fsp.ErrUnsupported)
+	if !Supported() {
+		return 0, fmt.Errorf("pty: %s: %w", runtime.GOOS, fsp.ErrUnsupported)
+	}
+	if len(opts.Command) == 0 {
+		return 0, fmt.Errorf("pty: there is no command to run")
+	}
+	return run(ctx, opts)
 }
