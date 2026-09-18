@@ -62,7 +62,7 @@ func (b *box) pumpEndpoint(ctx context.Context, ep fsp.EndpointID) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		if b.budget(win) < 1 {
+		if b.budget(ep, win) < 1 {
 			// FlushHeld redelivers it the next time the operator writes.
 			if err := b.hold(ctx, ep, u, reasonBudget); err != nil {
 				return err
@@ -84,7 +84,7 @@ func (b *box) pumpEndpoint(ctx context.Context, ep fsp.EndpointID) error {
 		consumed := make([]ports.OutboxRow, 0, len(merged)+1)
 		consumed = append(consumed, merged...)
 		consumed = append(consumed, u)
-		if err := b.deliver(ctx, ep, &win, u, consumed, b.budget(win)); err != nil {
+		if err := b.deliver(ctx, ep, &win, u, consumed, b.budget(ep, win)); err != nil {
 			return err
 		}
 	}
@@ -98,7 +98,7 @@ func (b *box) pumpEndpoint(ctx context.Context, ep fsp.EndpointID) error {
 		if now.Sub(group[0].CreatedAt) < b.cfg.MergeInterval.Duration {
 			continue
 		}
-		budget := b.budget(win)
+		budget := b.budget(ep, win)
 		// One reply always stays reserved for an urgent message.
 		if budget < 2 {
 			continue
@@ -216,7 +216,7 @@ func (b *box) deliver(ctx context.Context, ep fsp.EndpointID, win *ports.Window,
 		attempts += tries
 		if st == fsp.DeliveryAccepted || st == fsp.DeliveryUnknown {
 			// An unknown send may well have arrived, so it spends a reply too.
-			if err := b.spend(ctx, win); err != nil {
+			if err := b.spend(ctx, ep, win); err != nil {
 				return err
 			}
 		}
@@ -239,8 +239,13 @@ func (b *box) finish(ctx context.Context, consumed []ports.OutboxRow, state fsp.
 	return nil
 }
 
-// spend books one reply against the window and saves it.
-func (b *box) spend(ctx context.Context, win *ports.Window) error {
+// spend books one reply against the window and saves it. A platform with no
+// budget to spend keeps no tally: writing one would only invent a window for
+// an entry point that has none.
+func (b *box) spend(ctx context.Context, ep fsp.EndpointID, win *ports.Window) error {
+	if b.limitsFor(ep).budget >= unlimited {
+		return nil
+	}
 	win.Used++
 	if err := b.store.SaveWindow(ctx, *win); err != nil {
 		return fmt.Errorf("save window: %w", err)
@@ -257,7 +262,7 @@ func (b *box) sendOwn(ctx context.Context, ep fsp.EndpointID, win *ports.Window,
 	}
 	st, _ := b.send(ctx, ep, win, msg)
 	if st == fsp.DeliveryAccepted || st == fsp.DeliveryUnknown {
-		if err := b.spend(ctx, win); err != nil {
+		if err := b.spend(ctx, ep, win); err != nil {
 			return err
 		}
 	}
@@ -298,17 +303,22 @@ func (b *box) send(ctx context.Context, ep fsp.EndpointID, win *ports.Window, ms
 }
 
 // sendOnce calls the adapter under the configured send timeout and maps a bare
-// error onto a delivery state.
+// error onto a delivery state. It waits first for the platform's send rate:
+// every attempt counts against it, retries included.
 func (b *box) sendOnce(ctx context.Context, msg fsp.Outbound, replyCtx string) (fsp.DeliveryState, error) {
+	im, err := b.adapter(msg.Endpoint)
+	if err != nil {
+		return fsp.DeliveryRejected, err
+	}
+	if err := b.await(ctx, msg.Endpoint.Platform, b.limitsFor(msg.Endpoint)); err != nil {
+		return fsp.DeliveryUnknown, err
+	}
+
 	sendCtx := ctx
 	if d := b.cfg.SendTimeout.Duration; d > 0 {
 		var cancel context.CancelFunc
 		sendCtx, cancel = context.WithTimeout(ctx, d)
 		defer cancel()
-	}
-	im, err := b.adapter(msg.Endpoint)
-	if err != nil {
-		return fsp.DeliveryRejected, err
 	}
 	state, err := im.Send(sendCtx, msg, replyCtx)
 	if err == nil {

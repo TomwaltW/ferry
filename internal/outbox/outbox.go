@@ -72,6 +72,7 @@ type box struct {
 	waker ports.Waker
 	home  string
 	ttl   time.Duration
+	rate  *rateGate
 
 	wake chan struct{}
 	// passes counts completed queue passes. Tests wait on it instead of
@@ -117,6 +118,7 @@ func New(opts Options) ports.Outbox {
 		waker: opts.Waker,
 		home:  opts.Home,
 		ttl:   opts.Config.WindowTTL.Duration,
+		rate:  newRateGate(),
 		wake:  make(chan struct{}, 1),
 	}
 	if b.clk == nil {
@@ -178,26 +180,39 @@ func (b *box) signal() {
 }
 
 // window returns the endpoint's reply window and whether anything can be sent
-// through it. A window with no reply context, or one older than window_ttl, is
-// no window at all (spec-p2 3.6).
+// through it. A window with no reply context, or one older than the platform's
+// window_ttl, is no window at all (spec-p2 3.6). A platform that needs no
+// window — Feishu — is always open: whatever was stored only carries the
+// message a reply answers.
 func (b *box) window(ctx context.Context, ep fsp.EndpointID) (ports.Window, string, bool, error) {
+	lim := b.limitsFor(ep)
 	win, err := b.store.LoadWindow(ctx, ep)
 	switch {
 	case errors.Is(err, fsp.ErrNotFound):
+		if !lim.needsWindow {
+			return ports.Window{Endpoint: ep}, "", true, nil
+		}
 		return ports.Window{}, reasonNoWindow, false, nil
 	case err != nil:
 		return ports.Window{}, "", false, fmt.Errorf("outbox: load window: %w", err)
-	case win.ReplyCtx == "":
+	}
+	if !lim.needsWindow {
+		return win, "", true, nil
+	}
+	if win.ReplyCtx == "" {
 		return win, reasonNoReplyCtx, false, nil
 	}
-	if age := b.clk.Now().Sub(win.OpenedAt); age.Nanoseconds() >= b.ttl.Nanoseconds() {
+	if age := b.clk.Now().Sub(win.OpenedAt); age.Nanoseconds() >= lim.ttl.Nanoseconds() {
 		return win, reasonWindowStale, false, nil
 	}
 	return win, "", true, nil
 }
 
-// budget is how many replies the window has left.
-func (b *box) budget(win ports.Window) int { return b.cfg.ReplyBudget - win.Used }
+// budget is how many replies the endpoint's window has left, by the rules of
+// its own platform.
+func (b *box) budget(ep fsp.EndpointID, win ports.Window) int {
+	return b.limitsFor(ep).remaining(win)
+}
 
 func (b *box) audit(ctx context.Context, ep fsp.EndpointID, session fsp.SessionID, detail string) {
 	e := ports.AuditEntry{

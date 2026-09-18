@@ -34,6 +34,7 @@ type harness struct {
 	deps      Deps
 	d         *Daemon
 	im        *fakeIM
+	im2       *fakeIM // the second entry point, only in the multi-platform tests
 	store     *memStore
 	outbox    *fakeOutbox
 	acl       *fakeACL

@@ -12,6 +12,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+
+	"github.com/TomwaltW/ferry/internal/clock"
 )
 
 // tokenBytes is half the 32 hex characters spec-p2 3.4 asks for.
@@ -21,10 +23,36 @@ const tokenBytes = 16
 // without end.
 const maxLine = 1 << 20
 
+// ServeOptions is what Serve needs beyond the home directory and the handler:
+// the clock the keepalive of an attached stream runs on, and where to log.
+// Both are optional.
+type ServeOptions struct {
+	Home    string
+	Handler Handler
+	Clock   clock.Clock
+	Log     *slog.Logger
+}
+
 // Serve listens on a loopback port, publishes it in <home>/control.json with
 // mode 0600 and answers control requests until ctx ends. The file is removed on
 // the way out, so a stale one always means a daemon that died.
 func Serve(ctx context.Context, home string, h Handler) error {
+	return ServeWith(ctx, ServeOptions{Home: home, Handler: h})
+}
+
+// ServeWith is Serve with the clock and the logger spelled out, which is how
+// the tests drive the keepalive of an attached stream without waiting.
+func ServeWith(ctx context.Context, opts ServeOptions) error {
+	home, h := opts.Home, opts.Handler
+	clk := opts.Clock
+	if clk == nil {
+		clk = clock.Real()
+	}
+	log := opts.Log
+	if log == nil {
+		log = slog.Default()
+	}
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("control: listen: %w", err)
@@ -53,7 +81,7 @@ func Serve(ctx context.Context, home string, h Handler) error {
 			}
 			return fmt.Errorf("control: accept: %w", err)
 		}
-		go serveConn(ctx, conn, token, h)
+		go serveConn(ctx, conn, token, h, clk, log)
 	}
 }
 
@@ -91,7 +119,7 @@ func writeEndpoint(path string, ep Endpoint) error {
 // serveConn reads one JSON object per line until the peer goes away. A request
 // whose token does not match ends the connection: there is nothing to say to a
 // caller that could not read control.json.
-func serveConn(ctx context.Context, conn net.Conn, token string, h Handler) {
+func serveConn(ctx context.Context, conn net.Conn, token string, h Handler, clk clock.Clock, log *slog.Logger) {
 	defer conn.Close()
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
@@ -108,7 +136,13 @@ func serveConn(ctx context.Context, conn net.Conn, token string, h Handler) {
 		if subtle.ConstantTimeCompare([]byte(req.Token), []byte(token)) != 1 {
 			// Audited rather than answered: the daemon must not become an
 			// oracle for guessing the token.
-			slog.Default().Warn("control: token rejected", "remote", conn.RemoteAddr().String(), "op", req.Op)
+			log.Warn("control: token rejected", "remote", conn.RemoteAddr().String(), "op", req.Op)
+			return
+		}
+		if req.Op == OpAttach {
+			// The connection stops being request/response here and belongs to
+			// the external session until one of the two sides goes away.
+			serveAttach(ctx, conn, enc, dec, req, h, clk, log)
 			return
 		}
 		if err := enc.Encode(dispatch(ctx, req, h)); err != nil {

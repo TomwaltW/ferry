@@ -27,6 +27,11 @@ type fakeHandler struct {
 	parkErr  error
 	status   StatusResponse
 	statusEr error
+
+	attaches  []AttachRequest
+	attach    AttachResponse
+	attachErr error
+	streams   chan ServerStream
 }
 
 func (f *fakeHandler) Park(ctx context.Context, req ParkRequest) (ParkResponse, error) {
