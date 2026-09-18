@@ -1,7 +1,7 @@
 # 开发派工 Spec — Ferry P4 第一批（Windows 补齐、多用户隔离、审计导出、飞书卡片审批、系统服务）
 
 > 生成于 2026-09-18，由 P4-T0 按 `docs/dev/spec-p3.md` 末尾「附录：P4 发行清单」写成。本批次唯一权威文档，另须遵守 `docs/dev/00-overview.md` 第 3 节。
-> 前置条件：`main` 位于 `0492443`（`Merge branch 'p3-tomega' into main`）；本文件与第 3 节标「T0 已落地」的代码在同一个提交里（分支 `p4-t0`）。冻结后不再修改。
+> 前置条件：T0 从 `main` 的 `0492443`（`Merge branch 'p3-tomega' into main`）开工；此后 `main` 前进到 `6b699ee`（合入 `windows-ci-green`，见 F4）。本文件与第 3 节标「T0 已落地」的代码都在分支 `p4-t0` 上。冻结后不再修改。
 > 本批次范围由总管定：附录 9 项里收前 5 项。发行渠道、文档站、公开发布、名称与商标要用户本人的账号与决策，不在本批次。
 
 ## 0. 已核实的事实与开工前准备
@@ -10,10 +10,10 @@
 
 | # | 项 | 结论 |
 | --- | --- | --- |
-| F1 | 基线 | `main` = `origin/main` = `0492443`；`go build ./...` 退出码 0；`go test ./... -count=1` 为 `ok` 31 条、`FAIL` 0 条；`go test ./test/e2e/... -count=1 -v` 为 `--- PASS` 20 条（P1 的 11 条 + P3 的 9 条） |
-| F2 | 基线的 CI | run `35327973192`（`0492443`）：7 个 job 里 lint、i18n、cross、race、test (ubuntu-latest)、test (macos-latest) 绿，**只有 test (windows-latest) 红**。往前 4 次推到 `main` 的 run 也都是、且只是这个 job 红：`35191427689`（p1-tomega 修 Windows e2e）、`35194160875` 与 `35194714543`（两条 `test: make ... run on windows`）、`35196014351`（p2-t0）。再往前是 p1-tomega 的第一次 push（`35190898538`），当时 race 与 Windows 两个 job 都红。所以自 p1-tomega 起，`main` 上的 CI 一次也没全绿过 |
+| F1 | 基线（T0 开工时） | `main` = `origin/main` = `0492443`；`go build ./...` 退出码 0；`go test ./... -count=1` 为 `ok` 31 条、`FAIL` 0 条；`go test ./test/e2e/... -count=1 -v` 为 `--- PASS` 20 条（P1 的 11 条 + P3 的 9 条） |
+| F2 | 基线的 CI | run `35327973192`（`0492443`）：7 个 job 里 lint、i18n、cross、race、test (ubuntu-latest)、test (macos-latest) 绿，**只有 test (windows-latest) 红**。往前 4 次推到 `main` 的 run 也都是、且只是这个 job 红：`35191427689`（p1-tomega 修 Windows e2e）、`35194160875` 与 `35194714543`（两条 `test: make ... run on windows`）、`35196014351`（p2-t0）。再往前是 p1-tomega 的第一次 push（`35190898538`），当时 race 与 Windows 两个 job 都红。所以从 p1-tomega 到 `0492443`，`main` 上的 CI 一次也没全绿过；第一次全绿是 `6b699ee`（F4） |
 | F3 | Windows 的 6 条失败 | 原文与根因见 1.1 的表。根因来自 CI 日志原文和代码，**与派单里「像是哪一类」那一栏有两处不同**：`TestFeishuFake` 不是大小写/分隔符问题，`TestProxyInjectWhenIdle` 不是进程或管道时序问题 |
-| F4 | 修复已经存在 | 另一会话在分支 `windows-ci-green` 上只改测试修掉了全部 6 条（基于 `0492443`，7 个文件）。提交 `81ca746` 后来 amend 成 `9cb195a`（只多改 `registry_test.go` 一处）。CI run `35330519849`（`81ca746`）与 `35331408004`（`9cb195a`）**7 个 job 全绿**。截至本文件写成，它**没有**合入 `main` |
+| F4 | Windows 修复已合入 `main` | 另一会话在分支 `windows-ci-green` 上只改测试修掉了全部 6 条（基于 `0492443`，7 个已有的测试文件；没有新增测试函数，也没有新包）。提交 `81ca746` 后来 amend 成 `9cb195a`（只多改 `registry_test.go` 一处），这是最终版。它已合入 `main`：`6b699ee`（`Merge branch 'windows-ci-green' into main`），已 push。CI run `35334782587`（`6b699ee`）**7 个 job 全绿，含 test (windows-latest)，是 `main` 上第一次全绿**。`p4-t0` 与它改的文件不相交，`git merge-tree` 试合并无冲突 |
 | F5 | 标签现状 | 仓库里只有 `p0-base`、`p0-done`、`p1-base`、`p2-base`、`p3-base`。没有 `p1-done`、`p2-done`、`p3-done`，也没有 `v0.1.0`、`v0.2.0`、`v0.3.0` |
 | F6 | P2 的 TΩ 从未执行 | `main` 的历史里没有 `p2-tomega`：p2-t1..t4 合入后直接是 p3-t0。spec-p2 2.2 的 B1–B13 端到端测试一条都不在 `test/e2e`；`git log --all -S TestBusyRefused` 为空。附录写的验收「Windows 上 P2 的 B4 …… 通过」照字面跑 `go test ./test/e2e/ -run TestBusyRefused`，结果会是 `ok … [no tests to run]`，**是恒真判据**。B4 的行为只在单元层有覆盖：`internal/core/handoff_test.go` 的 `TestUseBusyRefused`（假 Handoff），以及 `internal/handoff/busy_test.go` 的两条真实进程测试（在 Linux、macOS 以外 Skip） |
 | F7 | P3 的 B9 | `test/e2e/pty_test.go` 首行是 `//go:build linux \|\| darwin`；`internal/driver/pty/pty.go:50` 的 `Supported()` 是 `runtime.GOOS != "windows"`。Windows 上只跑 `run_windows_test.go`，它断言的是「不支持」 |
@@ -34,8 +34,8 @@
 
 **开工前准备（人工）**
 
-1. **v0.3.0 与本批次无关，可以先办。** `windows-ci-green` 的 CI 已全绿（F4）。要不要先合入 `main`、何时按 spec-p3 第 9 节打 `p3-done` 与 `v0.3.0`，是你的决定。`v0.1.0`、`v0.2.0` 要不要补打，也一并由你定（F5）。先合的话，T1-a 就只剩确认（见 3.8）。
-2. T0 回执为 done 后：把 `p4-t0` 合入 `main`，在 `main` 上复跑 T0 的 7 项验收，全绿后执行 `git tag p4-b1-base && git push origin p4-b1-base`。
+1. **v0.3.0 已不再等本批次。** `windows-ci-green` 已合入 `main`（`6b699ee`），`main` 的 CI 第一次全绿（F4）。何时按 spec-p3 第 9 节打 `p3-done` 与 `v0.3.0`（那一节的人工验收清单也要过），以及要不要补打 `v0.1.0`、`v0.2.0`（F5），都由你决定。T1-a 因此只剩确认（见 3.8）。
+2. T0 回执为 done 后：把 `p4-t0` 合入 `main`（已试合并，无冲突），在 `main` 上复跑 T0 的 7 项验收，全绿后执行 `git tag p4-b1-base && git push origin p4-b1-base`。**第 7 项在 `main` 上要改成对 `6b699ee` 比较**（`git diff --name-only 6b699ee HEAD`），或者直接在 `p4-t0` 分支上对 `0492443` 比较；否则 `windows-ci-green` 的 7 个测试文件也会被算进来，看起来像越界。
 3. 按全局约定建 worktree（`<repo>/.worktrees/task-t1` … `task-t5`，分支 `p4-t1` … `p4-t5`，基线钉 `p4-b1-base` 对应的**具体 sha**），在其中一个里实跑第 8 节「开场自检」的 6 条，把实测值填进各派工提示词的占位，派单落盘为 `review/paste-t1.md` … `paste-t5.md`，然后 `claude-fleet t1..t5`。
 4. T4 的人工准备：在飞书开放平台给应用开启「卡片回传交互」，并在长连接模式下订阅卡片回调（`card.action.trigger`）。
 5. T5 的人工准备：Windows 验收机上确认安装账号有「作为服务登录」权限，或准备在本地安全策略里加上；Linux 验收机要能运行 `loginctl enable-linger`。
@@ -62,11 +62,11 @@
 
 ### 1.1 T1 是两件同名的事
 
-**因果链**：spec-p3 第 9 节收尾写着「`git push origin main`，确认 CI 全绿；`git tag p3-done v0.3.0`」。自 p1-tomega 起，`main` 上的 CI 一次也没全绿过，最近 5 次都只红在 `test (windows-latest)` 一个 job 上（F2）。CI 不全绿就打不了 `v0.3.0`。**所以 T1-a 是解锁 `v0.3.0` 的那一组。** 修复已经在 `windows-ci-green` 上、CI 全绿（F4）。它一旦合入 `main`，`v0.3.0` 就不再等本批次；T1-a 在本批次里的职责，是保证合流后 Windows job 仍然绿，并按 3.8 把私密落盘的判据写死。
+**因果链**：spec-p3 第 9 节收尾写着「`git push origin main`，确认 CI 全绿；`git tag p3-done v0.3.0`」。从 p1-tomega 到 `0492443`，`main` 上的 CI 一次也没全绿过，其中最近 5 次都只红在 `test (windows-latest)` 一个 job 上（F2）。CI 不全绿就打不了 `v0.3.0`。**所以 T1-a 是解锁 `v0.3.0` 的那一组。** 修复已合入 `main`（`6b699ee`），`main` 的 CI 已全绿（F4），`v0.3.0` 不再等本批次。T1-a 在本批次里只剩两件事：保证合流后 Windows job 仍然绿（C3），并按 3.8 把私密落盘的判据写死。
 
-**T1-a：让 Windows CI 转绿。** 下表 6 条逐条点名，验收是 `test (windows-latest)` 绿：
+**T1-a：让 Windows CI 转绿。** 下表 6 条逐条点名，验收是 `test (windows-latest)` 绿。`6b699ee` 已经做到了，本批次要的是合流后不回归：
 
-| 包 | 测试 | CI 原文（run 35327973192） | 真实根因 | 修法（`windows-ci-green` 已做） |
+| 包 | 测试 | CI 原文（run 35327973192） | 真实根因 | 修法（`windows-ci-green` 已做，已在 `main`） |
 | --- | --- | --- | --- | --- |
 | `internal/im/wechat` | `TestInboundImageDownloaded` | `mode = -rw-rw-rw- (err <nil>), want 0600` | Windows 没有 POSIX 权限位，`os.Chmod` 只切只读属性，`Perm()` 一律报 0666。**产品侧也确实没有收紧**（见 3.8） | 断言只在非 Windows 上做，缺口写进注释 |
 | `internal/outbox` | `TestLongOutputToFile` | `file mode = 666, want 600` | 同上 | 同上 |
@@ -345,8 +345,7 @@ ReceivedAt = 现在
 
 **T1-a**
 
-- 若 `p4-b1-base` 已含 `windows-ci-green`（`git merge-base --is-ancestor 9cb195a p4-b1-base`；派单时该分支若已前进，以派单写的 sha 为准），T1-a 只做确认，不写代码。
-- 否则 T1 在 `p4-t1` 上执行 `git merge --no-ff windows-ci-green`。它改的 7 个文件都在 T1 的可写范围内（3.13）。不另起炉灶。
+- `p4-b1-base` 已含 `windows-ci-green`：`9cb195a` 经 `6b699ee` 合入了 `main`（F4）。所以 T1-a **不写代码**，只做确认：T1 验收第 6 条，加上 push 后的 C3。那 7 个测试文件不在 T1 的可写范围内。
 
 **私密落盘判据（契约）**：
 
@@ -437,30 +436,30 @@ T1 不新增键：沿用 `cli.run_unsupported`、`handoff.busy`、`handoff.busy_
 | 路径 | owner | 其他任务 |
 | --- | --- | --- |
 | `internal/ports/**`（含 `deps/`）、`internal/config/types.go`、`internal/config/config.go`、`internal/control/types.go`、`internal/control/client.go`、`internal/control/client_test.go`、`internal/store/migrations/**`、`locales/*.toml`、`go.mod`、`go.sum` | T0 | 只读，改动即任务失败 |
-| `.github/workflows/ci.yml`；`internal/handoff/**`；`internal/driver/pty/**`；`cmd/ferry/run.go`；`test/e2e/pty_test.go`、`test/e2e/busy_test.go`（新）、`test/e2e/testdata/lineecho/**`（新）；T1-a 的 7 个测试文件：`internal/registry/registry_test.go`、`internal/im/channelhost/channelhost_test.go`、`internal/im/wechat/media_test.go`、`internal/outbox/file_test.go`、`internal/driver/proxy/harness_test.go`、`internal/driver/proxy/proxy_test.go`、`test/e2e/harness_test.go` | T1 | 不可改 |
+| `.github/workflows/ci.yml`；`internal/handoff/**`；`internal/driver/pty/**`；`cmd/ferry/run.go`；`test/e2e/pty_test.go`、`test/e2e/busy_test.go`（新）、`test/e2e/testdata/lineecho/**`（新）、`test/e2e/harness_test.go`（B6 若要在 rig 里注入 selfPID） | T1 | 不可改 |
 | `internal/acl/**`、`internal/core/**`、`internal/approval/**`、`internal/workspace/**`（若新建） | T2 | 不可改 |
 | `internal/store/audit.go`、`internal/store/audit_test.go`（均新建）、`internal/audit/**`（新）、`cmd/ferry/audit.go`（新） | T3 | 不可改 |
 | `internal/im/feishu/**`（含 `feishutest`） | T4 | 不可改 |
 | `internal/service/**`（新）、`cmd/ferry/service.go`（新）、`cmd/ferry/daemon.go` | T5 | 不可改 |
 | `cmd/ferry/**`（上述文件除外）、`test/e2e/**`（上述 T1 的文件除外；`harness_test.go` 在合入 `p4-t1` 之后可改）、`README.md`、`README.zh-CN.md`、`SECURITY.md`、`SECURITY.zh-CN.md`、`docs/en/**`、`docs/zh-CN/**` | TΩ | 不可改 |
-| 其余已有产物（`internal/store` 其余文件、`internal/outbox` 其余文件、`internal/registry` 其余文件、`internal/im/wechat` 其余文件、`internal/im/channelhost` 其余文件、其他驱动、`internal/fsp/**`、`internal/security/**`、`internal/deps/**` 等） | 无 | 只读 |
+| 其余已有产物（`internal/store`（T3 的两个新文件除外）、`internal/outbox/**`、`internal/registry/**`、`internal/im/wechat/**`、`internal/im/channelhost/**`、pty 以外的驱动、`internal/fsp/**`、`internal/security/**`、`internal/deps/**` 等；`windows-ci-green` 改过的 7 个测试文件也在此列） | 无 | 只读 |
 | `docs/dev/**`、`LICENSE` | 人工 | 只读 |
 
 `internal/acl/**` 在本批次对 T0 开放过，但 T0 没有改它（Q1–Q3 的实现归 T2）；T0 提交之后它归 T2。
 
 ## 4. 基线
 
-- **T0 起点**：`main` 上的 `0492443`，工作区干净。T0 在 `.worktrees/task-t0`、分支 `p4-t0` 上完成，本文件与契约代码在同一个提交里。
-- **并行基线**：标签 `p4-b1-base`。总管合入 `p4-t0`、在 `main` 上复跑 T0 的 7 项验收后打。worktree 钉该标签对应的**具体 sha**，不钉分支名。
-- 若 `windows-ci-green` 在打 `p4-b1-base` 之前已合入 `main`，基线就已经含 T1-a 的修复（3.8）。
-- **开场自检期望值**（T0 提交时实测；总管派单前在新 worktree 里复测刷新）：`go build ./...` 退出码 0；`go test ./... -count=1` 为 `ok` 31 条、`FAIL` 0 条（新增的 `internal/ports/deps` 没有测试文件，不计入 ok）；e2e `--- PASS` 20 条；`check-i18n` 为 `i18n ok`。`windows-ci-green` 只改测试、不加包也不加 e2e，合入与否这几个数都不变。以实跑为准。
+- **T0 起点**：`main` 上的 `0492443`，工作区干净。T0 在 `.worktrees/task-t0`、分支 `p4-t0` 上完成。
+- **T0 之后 `main` 前进到 `6b699ee`**（合入 `windows-ci-green`，F4）。`p4-t0` 与它改的文件不相交，`git merge-tree` 试合并无冲突。
+- **并行基线**：标签 `p4-b1-base`，即总管把 `p4-t0` 合入 `main`（`6b699ee` 之上）、复跑 T0 的 7 项验收之后的那个提交（复跑第 7 项的注意事项见开工前准备 2）。**所以基线已经含 T1-a 的修复。** worktree 钉该标签对应的**具体 sha**，不钉分支名。
+- **开场自检期望值**（T0 提交时实测；总管派单前在新 worktree 里复测刷新）：`go build ./...` 退出码 0；`go test ./... -count=1` 为 `ok` 31 条、`FAIL` 0 条（新增的 `internal/ports/deps` 没有测试文件，不计入 ok）；e2e `--- PASS` 20 条；`check-i18n` 为 `i18n ok`。`windows-ci-green` 只改 7 个已有的测试文件，不加包，也不加测试函数（已核对），所以合入后这几个数不变。以实跑为准。
 
 ## 5. 任务表
 
 | 任务 | 目标 | 时序 |
 | --- | --- | --- |
 | T0 | 依赖、配置类型与校验、端口（Workspaces、AuditReader、审批键）、i18n 键、本文件 | 已完成；打 `p4-b1-base` 后其余才起 |
-| T1 | T1-a 合入或确认 `windows-ci-green`；T1-b ConPTY、Windows 占用检测、补写 B6、放开 B7、CI 防恒真检查 | 并行 |
+| T1 | T1-a 确认 Windows 修复已在基线；T1-b ConPTY、Windows 占用检测、补写 B6、放开 B7、CI 防恒真检查 | 并行 |
 | T2 | owner 全 bot 通认、`ApproversFor` 接入 ACL、`Workspaces` 实现、核心与审批策略按用户 Roots、审批消息带键 | 并行 |
 | T3 | `AuditReader` 的实现、`ferry audit export` | 并行 |
 | T4 | 卡片发送、按钮回调合成文本裁决、`feishutest` | 并行 |
@@ -514,7 +513,7 @@ T1 不新增键：沿用 `cli.run_unsupported`、`handoff.busy`、`handoff.busy_
 | 任务 | 必须通过（命令见各自提示词） |
 | --- | --- |
 | T0 | G1–G3、全量单测 31 ok、e2e 20 PASS、check-i18n、`git diff --name-only` 白名单，共 7 项（已完成） |
-| T1 | handoff 与 pty 两组测试、重复 3 次稳定、B6 与 B7 在本机 PASS、Windows 交叉 vet、Windows 测试文件清单、全量单测、G1–G3、白名单，共 11 项；外加总管 push 后的 C3 |
+| T1 | handoff 与 pty 两组测试、重复 3 次稳定、B6 与 B7 在本机 PASS、Windows 交叉 vet、Windows 测试文件清单、基线含 Windows 修复、全量单测、G1–G3、白名单，共 11 项；外加总管 push 后的 C3 |
 | T2 | acl、core、approval 三组测试、重复 3 次稳定、e2e 20 PASS、全量单测、G1–G3、白名单，共 10 项 |
 | T3 | store、audit 两组测试、CLI 的 help、正常导出、两种非法参数、全量单测、G1–G3、白名单，共 11 项 |
 | T4 | feishu 测试、重复 3 次稳定、P3 的两条飞书 e2e、全量单测、G1–G3、白名单，共 8 项 |
@@ -560,7 +559,7 @@ worktree 已由总管建好：/Users/shensikai/Documents/Projects/Ferry/.worktre
 - docs/dev/spec-p4-b1.md 第 0 节（F2–F8）、1.1、3.1、3.8、3.12、3.13、5.1
 
 ## 目标
-T1-a：保证 Windows CI 的 6 条失败在本分支上已修（基线含 windows-ci-green 就只确认；不含就 git merge --no-ff windows-ci-green），并遵守 3.8 的私密落盘判据（不写 ACL 代码）。
+T1-a：基线已含 windows-ci-green（经 6b699ee 合入 main），只确认、不写代码，并遵守 3.8 的私密落盘判据（不写 ACL 代码）。
 T1-b：ferry run 在 Windows 上走 ConPTY；internal/handoff 在 Windows 上读进程表做占用检测；补写 TestBusyRefused（三平台）；放开 TestPTYRun 的构建标签（Windows 用 lineecho 夹具）；在 CI 里加 3.8 的防恒真检查。
 
 ## 可写文件（只有这些）
@@ -569,7 +568,7 @@ T1-b：ferry run 在 Windows 上走 ConPTY；internal/handoff 在 Windows 上读
 - internal/driver/pty/**
 - cmd/ferry/run.go
 - test/e2e/pty_test.go、test/e2e/busy_test.go（新）、test/e2e/testdata/lineecho/**（新）
-- T1-a 的 7 个测试文件：internal/registry/registry_test.go、internal/im/channelhost/channelhost_test.go、internal/im/wechat/media_test.go、internal/outbox/file_test.go、internal/driver/proxy/harness_test.go、internal/driver/proxy/proxy_test.go、test/e2e/harness_test.go
+- test/e2e/harness_test.go（只在 B6 需要往 rig 里注入 selfPID 时改）
 
 ## 禁改
 - docs/dev/**、LICENSE
@@ -582,7 +581,7 @@ T1-b：ferry run 在 Windows 上走 ConPTY；internal/handoff 在 Windows 上读
 3. go test ./test/e2e/ -run 'TestBusyRefused|TestPTYRun' -count=1 -v | grep -E '^--- (PASS|FAIL|SKIP)' → 两行，都是 PASS
 4. GOOS=windows go vet ./internal/handoff/... ./internal/driver/pty/... ./cmd/ferry/ ./test/e2e/... ; echo exit=$? → 无输出，exit=0
 5. GOOS=windows go list -f '{{join .TestGoFiles " "}}' ./test/e2e/ → 含 busy_test.go 与 pty_test.go
-6. { git merge-base --is-ancestor 9cb195a HEAD || git diff --quiet 9cb195a HEAD -- internal/registry/registry_test.go internal/im/channelhost/channelhost_test.go internal/im/wechat/media_test.go internal/outbox/file_test.go internal/driver/proxy/harness_test.go internal/driver/proxy/proxy_test.go test/e2e/harness_test.go; } ; echo exit=$? → exit=0（windows-ci-green 的修复在本分支里，合入或压成一个提交都算；派单若写了更新的 sha，以派单为准）
+6. git merge-base --is-ancestor 6b699ee HEAD ; echo exit=$? → exit=0（基线含 main 上合入 windows-ci-green 的那个提交）
 7. go test ./... -count=1 ; echo exit=$? → 全部 ok、FAIL 0 条，exit=0
 8. go build ./... ; echo exit=$? → exit=0
 9. go vet ./... ; echo exit=$? → 无输出，exit=0
