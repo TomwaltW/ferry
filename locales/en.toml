@@ -47,7 +47,7 @@
 "usage.lang" = "Usage: /lang zh or /lang en"
 "usage.pair" = "Usage: /pair <6-digit code>"
 "outbox.truncated" = "…({{.N}} more characters not sent)"
-"help.text" = "Commands:\n/ls list sessions\n/new <agent> [dir] start a session\n/use <number> switch session\n/agents list agents and availability\n/stop stop the current turn\n/close [number] close a session\n/mode <key> <value> set a session option\n/lang zh or /lang en switch language\n/pair <code> confirm pairing (approvers only)\n/pull coming in a later version\n/file <number> coming in a later version\n/help this text\nApprovals: reply y <ID> to allow once, a <ID> to always allow, n <ID> to reject\nA message starting with // is handled as ordinary text"
+"help.text" = "Commands:\n/ls list sessions\n/new <agent> [dir] start a session\n/use <number> switch session\n/agents list agents and availability\n/stop stop the current turn\n/close [number] close a session\n/mode <key> <value> set a session option\n/lang zh or /lang en switch language\n/pair <code> confirm pairing (approvers only)\n/pull fetch messages held while the reply window was shut\n/file <number> resend long output n as a file\n/help this text\nApprovals: reply y <ID> to allow once, a <ID> to always allow, n <ID> to reject\nA message starting with // is handled as ordinary text"
 "cli.scan_qr" = "Scan the QR code below with WeChat"
 "cli.login_ok" = "Signed in. bot: {{.Bot}}, owner: {{.Owner}}"
 "cli.need_init" = "No configuration yet; run ferry init first"

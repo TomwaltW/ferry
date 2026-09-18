@@ -33,9 +33,12 @@ one slash and treated as text.
 | `/mode <key> <value>` | | Set a session option, such as the agent's mode |
 | `/lang <zh or en>` | | Switch the bot's language for this chat |
 | `/pair <code>` | | Confirm a pairing code (approvers only) |
+| `/pull` | 收件 | Send the next batch of messages held while the window was shut |
+| `/file <n>` | | Resend long output n as a file |
 | `/help` | 帮助 | The command list |
 
-`/pull` and `/file` are accepted and answer that they arrive in a later version.
+`/pull` answers `Nothing is held back` once the backlog is empty. `/file` without a
+number resends the most recent one.
 
 ## Approvals
 

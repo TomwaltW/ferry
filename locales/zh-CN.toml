@@ -47,7 +47,7 @@
 "usage.lang" = "用法：/lang zh 或 /lang en"
 "usage.pair" = "用法：/pair <6 位配对码>"
 "outbox.truncated" = "……（其余 {{.N}} 字未发送）"
-"help.text" = "命令：\n/ls 或「会话」 列出会话\n/new <agent> [目录] 或「新建」 新建会话\n/use <编号> 切换会话\n/agents 列出 agent 与可用状态\n/stop 或「停」 停止当前轮次\n/close [编号] 或「关闭」 关闭会话\n/mode <项> <值> 设置会话选项\n/lang zh 或 /lang en 切换语言\n/pair <配对码> 确认配对（仅审批人）\n/pull 或「收件」 后续版本提供\n/file <编号> 后续版本提供\n/help 或「帮助」 本说明\n审批：回复 y <ID> 允许一次，a <ID> 总是允许，n <ID> 拒绝\n以 // 开头的消息按普通文本处理"
+"help.text" = "命令：\n/ls 或「会话」 列出会话\n/new <agent> [目录] 或「新建」 新建会话\n/use <编号> 切换会话\n/agents 列出 agent 与可用状态\n/stop 或「停」 停止当前轮次\n/close [编号] 或「关闭」 关闭会话\n/mode <项> <值> 设置会话选项\n/lang zh 或 /lang en 切换语言\n/pair <配对码> 确认配对（仅审批人）\n/pull 或「收件」 收取窗口关闭期间积压的消息\n/file <编号> 重发第 n 份长输出文件\n/help 或「帮助」 本说明\n审批：回复 y <ID> 允许一次，a <ID> 总是允许，n <ID> 拒绝\n以 // 开头的消息按普通文本处理"
 "cli.scan_qr" = "请用微信扫描下面的二维码"
 "cli.login_ok" = "登录成功，bot：{{.Bot}}，主人：{{.Owner}}"
 "cli.need_init" = "还没有配置，请先运行 ferry init"
