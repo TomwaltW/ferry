@@ -145,7 +145,7 @@ func (m *manager) Ask(ctx context.Context, req fsp.ApprovalRequest) (fsp.Verdict
 // auto records a request the policy decided on its own and returns the verdict.
 func (m *manager) auto(ctx context.Context, req fsp.ApprovalRequest, d fsp.Decision, optionID string) fsp.Verdict {
 	m.mu.Lock()
-	req.ID = m.freshIDLocked()
+	req.ID = m.idForLocked(req.ID)
 	m.mu.Unlock()
 
 	m.record(ctx, req)
@@ -165,7 +165,7 @@ func (m *manager) askOwner(ctx context.Context, req fsp.ApprovalRequest) (fsp.Ve
 	}
 
 	m.mu.Lock()
-	req.ID = m.freshIDLocked()
+	req.ID = m.idForLocked(req.ID)
 	p := &pendingApproval{req: req, owner: owner, result: make(chan fsp.Verdict, 1)}
 	m.pending[req.ID] = p
 	m.mu.Unlock()

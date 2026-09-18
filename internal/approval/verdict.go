@@ -106,6 +106,24 @@ func firstOptionID(options []fsp.ApprovalOption, kind fsp.ApprovalOptionKind) (s
 	return id, ok
 }
 
+// presetIDPattern is the shape an ID must have for the module to keep it:
+// exactly the alphabet and length freshIDLocked produces. A request that
+// already carries such an ID comes from a peer that has shown it to a human —
+// Claude Code's permission relay issues the ID before Ferry ever sees the
+// request — so reusing it keeps one ID on both sides of the relay.
+var presetIDPattern = regexp.MustCompile(`^[a-km-z]{5}$`)
+
+// idForLocked keeps the ID the request arrived with when it is well formed and
+// free, and assigns a new one otherwise. The caller holds m.mu.
+func (m *manager) idForLocked(preset string) string {
+	if presetIDPattern.MatchString(preset) {
+		if _, taken := m.pending[preset]; !taken {
+			return preset
+		}
+	}
+	return m.freshIDLocked()
+}
+
 // freshIDLocked returns an ID no pending approval is using. The caller holds
 // m.mu.
 func (m *manager) freshIDLocked() string {

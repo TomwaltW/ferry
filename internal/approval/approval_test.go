@@ -618,3 +618,102 @@ func TestOwnerlessSessionRejects(t *testing.T) {
 	}
 	h.outbox.quiet(t)
 }
+
+// --- P3: an ID the caller brought along ------------------------------------
+
+func TestPresetIDAccepted(t *testing.T) {
+	h := newHarness(t, config.PolicyConfig{Default: "ask"})
+	ctx := context.Background()
+
+	req := request("execute")
+	req.ID = "qrstu" // the shape Claude Code's permission relay issues
+	ch := h.ask(ctx, req)
+
+	// The question reaching the outbox is what says the approval is registered.
+	msg := h.outbox.next(t)
+	if got := h.pendingID(t); got != "qrstu" {
+		t.Fatalf("the approval is pending as %q, want the ID the request came with", got)
+	}
+	if !strings.Contains(msg.Text, "ID=qrstu") {
+		t.Errorf("the question reads %q, want it to quote ID=qrstu", msg.Text)
+	}
+
+	if !h.m.Resolve(ctx, "qrstu", fsp.DecisionAllowOnce, "userA") {
+		t.Fatal("Resolve did not find the approval under the preset ID")
+	}
+	v := waitVerdict(t, ch)
+	if v.ApprovalID != "qrstu" || v.Decision != fsp.DecisionAllowOnce || v.OptionID != "o-yes" {
+		t.Errorf("verdict = %+v, want qrstu allowed once through o-yes", v)
+	}
+
+	// A preset only survives when it is one of ours; anything else is replaced.
+	for _, bad := range []string{"", "abc", "abcdef", "abcdl", "AB CD", "ab3de"} {
+		t.Run("rejects "+bad, func(t *testing.T) {
+			h := newHarness(t, config.PolicyConfig{Default: "ask"})
+			req := request("execute")
+			req.ID = bad
+			h.ask(context.Background(), req)
+			h.outbox.next(t)
+			if got := h.pendingID(t); got == bad {
+				t.Errorf("the module kept %q, which is not a well-formed ID", got)
+			} else if !presetIDPattern.MatchString(got) {
+				t.Errorf("the replacement ID %q is not well formed either", got)
+			}
+		})
+	}
+}
+
+func TestPresetIDCollision(t *testing.T) {
+	h := newHarness(t, config.PolicyConfig{Default: "ask"})
+	ctx := context.Background()
+
+	first := request("execute")
+	first.ID = "qrstu"
+	firstCh := h.ask(ctx, first)
+	h.outbox.next(t)
+	if got := h.pendingID(t); got != "qrstu" {
+		t.Fatalf("the first approval is pending as %q, want qrstu", got)
+	}
+
+	// A second request carrying the same ID must not take the first one's
+	// place: whoever answers "y qrstu" would otherwise settle the wrong call.
+	second := request("delete")
+	second.ID = "qrstu"
+	secondCh := h.ask(ctx, second)
+	h.outbox.next(t)
+
+	if got := h.pendingCount(); got != 2 {
+		t.Fatalf("%d approvals pending, want 2", got)
+	}
+	var other string
+	h.m.mu.Lock()
+	for id, p := range h.m.pending {
+		if id != "qrstu" {
+			other = id
+			if p.req.ToolKind != "delete" {
+				t.Errorf("the freshly assigned ID went to the %q request, want the second one", p.req.ToolKind)
+			}
+		}
+	}
+	h.m.mu.Unlock()
+	if other == "" {
+		t.Fatal("the second request reused qrstu")
+	}
+	if !presetIDPattern.MatchString(other) {
+		t.Errorf("the assigned ID %q is not well formed", other)
+	}
+
+	// Each ID settles its own approval.
+	if !h.m.Resolve(ctx, other, fsp.DecisionReject, "userA") {
+		t.Fatal("Resolve did not find the second approval")
+	}
+	if v := waitVerdict(t, secondCh); v.ApprovalID != other || v.Decision != fsp.DecisionReject {
+		t.Errorf("second verdict = %+v, want %s rejected", v, other)
+	}
+	if !h.m.Resolve(ctx, "qrstu", fsp.DecisionAllowOnce, "userA") {
+		t.Fatal("Resolve did not find the first approval")
+	}
+	if v := waitVerdict(t, firstCh); v.ApprovalID != "qrstu" || v.Decision != fsp.DecisionAllowOnce {
+		t.Errorf("first verdict = %+v, want qrstu allowed", v)
+	}
+}

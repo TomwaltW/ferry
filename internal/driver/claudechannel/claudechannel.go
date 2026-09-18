@@ -2,10 +2,12 @@ package claudechannel
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"io"
 	"log/slog"
+	"os"
 
+	"github.com/TomwaltW/ferry/internal/control"
 	"github.com/TomwaltW/ferry/internal/fsp"
 )
 
@@ -50,6 +52,10 @@ const (
 	MetaTimestamp = "ts"
 )
 
+// agentName is what an external session started by this shim reports as its
+// agent. The session is Claude Code's, not one Ferry launched.
+const agentName = "claude-code"
+
 // Options is what `ferry channel` is started with: Claude Code runs it as a
 // stdio MCP server.
 type Options struct {
@@ -64,5 +70,65 @@ type Options struct {
 // handshake, but declares no permission capability and says so in its
 // instructions.
 func Run(ctx context.Context, opts Options) error {
-	return fmt.Errorf("claudechannel: Run: %w", fsp.ErrUnsupported)
+	in := opts.In
+	if in == nil {
+		in = os.Stdin
+	}
+	out := opts.Out
+	if out == nil {
+		out = os.Stdout
+	}
+	log := opts.Log
+	if log == nil {
+		// Stdout carries the protocol, so the log never goes there.
+		log = slog.New(slog.NewTextHandler(os.Stderr, nil))
+	}
+
+	st, session, platform := attach(ctx, opts.Home, log)
+	s := newShim(shimOptions{
+		Stream:   st,
+		Session:  session,
+		Platform: platform,
+		In:       in,
+		Out:      out,
+		Log:      log,
+	})
+	return s.run(ctx)
+}
+
+// attach registers an external session with the daemon. A daemon that is not
+// running is not an error: the shim carries on without one, which is what the
+// no-daemon instructions describe.
+func attach(ctx context.Context, home string, log *slog.Logger) (stream, string, string) {
+	cli, err := control.Dial(home)
+	if err != nil {
+		if !errors.Is(err, fsp.ErrNotFound) {
+			log.Error("claudechannel: reach the daemon", "error", err)
+		} else {
+			log.Info("claudechannel: no daemon is running; serving an idle channel")
+		}
+		return nil, "", ""
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = home
+	}
+	st, resp, err := cli.Attach(ctx, control.AttachRequest{
+		Kind:  control.KindChannel,
+		Agent: agentName,
+		Cwd:   cwd,
+		PID:   os.Getpid(),
+		// Claude Code is driven from IM, and its permission prompts are what
+		// the relay exists for, so both are on.
+		AllowInject:   true,
+		RemoteApprove: true,
+	})
+	if err != nil {
+		log.Error("claudechannel: attach to the daemon", "error", err)
+		_ = cli.Close()
+		return nil, "", ""
+	}
+	log.Info("claudechannel: attached", "session", resp.SessionID, "slot", resp.Slot)
+	return st, resp.SessionID, platformOf(resp.Endpoint)
 }

@@ -3,11 +3,7 @@ package mcpmini
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
-	"log/slog"
-
-	"github.com/TomwaltW/ferry/internal/fsp"
+	"slices"
 )
 
 // JSONRPCVersion is the only version this package speaks; frames are one JSON
@@ -74,81 +70,56 @@ type NotifyFunc func(ctx context.Context, method string, params json.RawMessage)
 // error return is for a call that could not be made at all.
 type CallFunc func(ctx context.Context, name string, args json.RawMessage) (ToolResult, error)
 
-type ServerOptions struct {
-	Info         Info
-	Instructions string
-	// Experimental goes into capabilities.experimental verbatim.
-	Experimental map[string]any
-	Tools        []Tool
-	Call         CallFunc
-	OnNotify     NotifyFunc
-	In           io.Reader
-	Out          io.Writer
-	Log          *slog.Logger
+// Capabilities is the capabilities object of the initialize exchange. Only the
+// members Ferry needs are named; experimental carries the channel extensions.
+type Capabilities struct {
+	Experimental map[string]any `json:"experimental,omitempty"`
+	Tools        *struct{}      `json:"tools,omitempty"`
 }
 
-// Server is the stdio server role. Its behaviour belongs to the P3-T3 task.
-type Server struct {
-	opts ServerOptions
+// InitializeParams is what the client sends.
+type InitializeParams struct {
+	ProtocolVersion string       `json:"protocolVersion"`
+	Capabilities    Capabilities `json:"capabilities"`
+	ClientInfo      Info         `json:"clientInfo"`
 }
 
-func NewServer(opts ServerOptions) *Server { return &Server{opts: opts} }
-
-// Run serves until In reaches its end or ctx is done.
-func (s *Server) Run(ctx context.Context) error {
-	return fmt.Errorf("mcpmini: Server.Run: %w", fsp.ErrUnsupported)
+// InitializeResult is what the server answers with.
+type InitializeResult struct {
+	ProtocolVersion string       `json:"protocolVersion"`
+	Capabilities    Capabilities `json:"capabilities"`
+	ServerInfo      Info         `json:"serverInfo"`
+	Instructions    string       `json:"instructions,omitempty"`
 }
 
-// Notify sends a notification to the client.
-func (s *Server) Notify(ctx context.Context, method string, params any) error {
-	return fmt.Errorf("mcpmini: Server.Notify: %w", fsp.ErrUnsupported)
+type listToolsResult struct {
+	Tools []Tool `json:"tools"`
 }
 
-// ProtocolVersion is what initialize settled on, empty before the handshake.
-func (s *Server) ProtocolVersion() string { return "" }
-
-type ClientOptions struct {
-	Info Info
-	// Command and Env start the peer; an empty Command means the caller wires
-	// In and Out itself.
-	Command  []string
-	Env      map[string]string
-	In       io.Reader
-	Out      io.Writer
-	OnNotify NotifyFunc
-	Log      *slog.Logger
+type callToolParams struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
-// Client is the stdio client role. Its behaviour belongs to the P3-T3 task.
-type Client struct {
-	opts ClientOptions
+// negotiate answers an initialize with the version both sides will speak.
+//
+// It follows what go-sdk v1.8.0 does in negotiatedVersion: the client's
+// version wins when the server knows it, but the initialize handshake was
+// superseded in 2026-07-28, so a version that new never comes out of it. A
+// client asking for something unknown gets the newest version this handshake
+// can settle on instead, which the lifecycle spec asks for.
+func negotiate(clientVersion string) string {
+	if slices.Contains(SupportedVersions, clientVersion) && clientVersion < ProtocolVersion20260728 {
+		return clientVersion
+	}
+	for _, v := range SupportedVersions {
+		if v < ProtocolVersion20260728 {
+			return v
+		}
+	}
+	return ProtocolVersion20251125
 }
 
-func NewClient(opts ClientOptions) *Client { return &Client{opts: opts} }
-
-// Start launches the peer and runs initialize followed by
-// notifications/initialized.
-func (c *Client) Start(ctx context.Context) error {
-	return fmt.Errorf("mcpmini: Client.Start: %w", fsp.ErrUnsupported)
-}
-
-func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
-	return nil, fmt.Errorf("mcpmini: Client.ListTools: %w", fsp.ErrUnsupported)
-}
-
-func (c *Client) CallTool(ctx context.Context, name string, args any) (ToolResult, error) {
-	return ToolResult{}, fmt.Errorf("mcpmini: Client.CallTool: %w", fsp.ErrUnsupported)
-}
-
-func (c *Client) Notify(ctx context.Context, method string, params any) error {
-	return fmt.Errorf("mcpmini: Client.Notify: %w", fsp.ErrUnsupported)
-}
-
-func (c *Client) Ping(ctx context.Context) error {
-	return fmt.Errorf("mcpmini: Client.Ping: %w", fsp.ErrUnsupported)
-}
-
-// ProtocolVersion is what initialize settled on, empty before Start.
-func (c *Client) ProtocolVersion() string { return "" }
-
-func (c *Client) Close() error { return nil }
+// LatestHandshakeVersion is the newest version an initialize can settle on,
+// and what a client asks for unless it says otherwise.
+const LatestHandshakeVersion = ProtocolVersion20251125
