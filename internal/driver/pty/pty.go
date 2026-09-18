@@ -45,9 +45,9 @@ type Options struct {
 	Clock clock.Clock
 }
 
-// Supported reports whether this platform has a pseudo terminal Ferry can use.
-// Windows has ConPTY, but wiring it up is P4.
-func Supported() bool { return runtime.GOOS != "windows" }
+// Supported reports whether this platform has a pseudo terminal Ferry can use:
+// a Unix one, or ConPTY on Windows 10 1809 and later.
+func Supported() bool { return platformSupported() }
 
 // Run starts the command in a pseudo terminal, forwards the user's terminal
 // both ways and registers the session with the daemon. It returns the exit

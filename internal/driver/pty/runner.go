@@ -91,7 +91,7 @@ func run(ctx context.Context, opts Options) (int, error) {
 		return 0, fmt.Errorf("pty: find the working directory: %w", err)
 	}
 
-	r.cmd = p.Command(opts.Command[0], opts.Command[1:]...)
+	r.cmd = p.Command(commandPath(opts.Command[0]), opts.Command[1:]...)
 	r.cmd.Env = os.Environ()
 	r.cmd.Dir = cwd
 
@@ -102,6 +102,8 @@ func run(ctx context.Context, opts Options) (int, error) {
 		return 0, err
 	}
 	defer restore()
+	restoreOut := vtOutput(opts.Out)
+	defer restoreOut()
 	stopResize := followSize(p, opts.Out, r.log)
 	defer stopResize()
 

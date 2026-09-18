@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"runtime"
+	"strings"
 
 	"github.com/TomwaltW/ferry/internal/fsp"
 	"github.com/TomwaltW/ferry/internal/ports"
@@ -23,8 +25,8 @@ type procInfo struct {
 
 // Busy reports whether a terminal still holds the session: a process whose
 // command line matches the agent's pattern and whose working directory is the
-// session's. Agents Ferry itself started are skipped, and so is every platform
-// that cannot be asked, which answers fsp.ErrUnsupported.
+// session's. Agents Ferry itself started are skipped. Linux, macOS and Windows
+// can be asked; any other platform answers fsp.ErrUnsupported.
 func (h *handoff) Busy(ctx context.Context, ts ports.TerminalSession) (bool, error) {
 	// A service-backed session is meant to be used from both sides at once.
 	if ts.Shared {
@@ -70,11 +72,20 @@ func (h *handoff) Busy(ctx context.Context, ts ports.TerminalSession) (bool, err
 		if err != nil {
 			continue
 		}
-		if norm == cwd {
+		if sameDir(runtime.GOOS, norm, cwd) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// sameDir compares two normalised directories the way the file system on goos
+// does: Windows does not care about case, so C:\Work and c:\work are one place.
+func sameDir(goos, a, b string) bool {
+	if goos == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 // descendantOf walks the parent chain of pid looking for ancestor.
