@@ -69,7 +69,7 @@ func (b *box) sendAsFile(ctx context.Context, ep fsp.EndpointID, win *ports.Wind
 	st, tries := b.send(ctx, ep, win, summary)
 	attempts += tries
 	if st == fsp.DeliveryAccepted || st == fsp.DeliveryUnknown {
-		if err := b.spend(ctx, win); err != nil {
+		if err := b.spend(ctx, ep, win); err != nil {
 			b.log.Error("outbox: save window", "endpoint", ep.String(), "err", err)
 		}
 		spent++
@@ -86,7 +86,7 @@ func (b *box) sendAsFile(ctx context.Context, ep fsp.EndpointID, win *ports.Wind
 	st, tries = b.send(ctx, ep, win, file)
 	attempts += tries
 	if st == fsp.DeliveryAccepted || st == fsp.DeliveryUnknown {
-		if err := b.spend(ctx, win); err != nil {
+		if err := b.spend(ctx, ep, win); err != nil {
 			b.log.Error("outbox: save window", "endpoint", ep.String(), "err", err)
 		}
 		spent++

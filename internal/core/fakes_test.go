@@ -37,6 +37,10 @@ func (fakeI18n) T(lang fsp.Lang, key string, args map[string]any) string {
 // ---------- IM adapter ----------
 
 type fakeIM struct {
+	// platform names the entry point; the zero value is fsp.PlatformFake, so
+	// that the single-adapter tests need not spell it out.
+	platform fsp.Platform
+
 	mu     sync.Mutex
 	out    chan<- fsp.Inbound
 	runs   int
@@ -46,7 +50,12 @@ type fakeIM struct {
 	sent   []fsp.Outbound
 }
 
-func (f *fakeIM) Platform() fsp.Platform { return fsp.PlatformFake }
+func (f *fakeIM) Platform() fsp.Platform {
+	if f.platform == "" {
+		return fsp.PlatformFake
+	}
+	return f.platform
+}
 
 func (f *fakeIM) Run(ctx context.Context, out chan<- fsp.Inbound) error {
 	f.mu.Lock()
@@ -174,6 +183,7 @@ type fakeACL struct {
 	confirmWho string
 	confirmErr error
 	owner      [3]string
+	owners     [][3]string
 }
 
 func (f *fakeACL) Allowed(ep fsp.EndpointID, senderID string) bool {
@@ -192,6 +202,7 @@ func (f *fakeACL) SetOwner(ctx context.Context, platform fsp.Platform, botID, ow
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.owner = [3]string{string(platform), botID, ownerID}
+	f.owners = append(f.owners, f.owner)
 	return nil
 }
 
@@ -212,6 +223,12 @@ func (f *fakeACL) ConfirmPairing(ctx context.Context, code string) (fsp.Endpoint
 		return fsp.EndpointID{}, "", f.confirmErr
 	}
 	return f.confirmEp, f.confirmWho, nil
+}
+
+func (f *fakeACL) ownerTuples() [][3]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][3]string(nil), f.owners...)
 }
 
 func (f *fakeACL) ownerTuple() [3]string {

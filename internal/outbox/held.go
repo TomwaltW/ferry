@@ -36,7 +36,7 @@ func (b *box) FlushHeld(ctx context.Context, ep fsp.EndpointID) error {
 		return nil
 	}
 
-	batch := b.budget(win) - flushReserve
+	batch := b.budget(ep, win) - flushReserve
 	if batch < 0 {
 		batch = 0
 	}
@@ -76,7 +76,7 @@ func (b *box) Pull(ctx context.Context, ep fsp.EndpointID) error {
 			Urgent: true,
 		})
 	}
-	batch := b.budget(win) - 1
+	batch := b.budget(ep, win) - 1
 	if batch < 1 {
 		return nil
 	}
@@ -118,7 +118,7 @@ func (b *box) redeliver(ctx context.Context, ep fsp.EndpointID, win *ports.Windo
 		if ctx.Err() != nil {
 			return nil
 		}
-		if b.budget(*win) < 1 {
+		if b.budget(ep, *win) < 1 {
 			return nil
 		}
 		if err := b.deliver(ctx, ep, win, r, []ports.OutboxRow{r}, 1); err != nil {

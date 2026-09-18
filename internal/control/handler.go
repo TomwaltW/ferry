@@ -44,6 +44,12 @@ type StatusResponse struct {
 type Handler interface {
 	Park(ctx context.Context, req ParkRequest) (ParkResponse, error)
 	Status(ctx context.Context) (StatusResponse, error)
+	// Attach registers an external session — one run by ferry proxy, ferry
+	// channel or ferry run — and keeps s for its lifetime. It returns as soon
+	// as the session exists, leaving the stream to a reader of its own: the
+	// answer it returns is what the external process is still waiting for, so
+	// nothing may be sent on s before Attach returns.
+	Attach(ctx context.Context, req AttachRequest, s ServerStream) (AttachResponse, error)
 }
 
 // errorCode maps an error onto the fixed vocabulary of Response.Error. Anything

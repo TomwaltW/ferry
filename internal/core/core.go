@@ -70,13 +70,23 @@ type Daemon struct {
 	log   *slog.Logger
 	roots []string // workspace roots, absolute with symlinks resolved
 
+	// adapters is every entry point by platform, and primary is the one a
+	// bare "is Ferry online" question is about: the platform external sessions
+	// bind to, or the first one configured (spec-p3 3.1).
+	adapters map[fsp.Platform]ports.IMAdapter
+	primary  ports.IMAdapter
+
 	mu        sync.Mutex
 	sessions  map[fsp.SessionID]*session // every session that is not closed
 	windows   map[string]string          // endpoint -> reply context of its last inbound
 	terminals map[string]terminalList    // endpoint -> the numbers its last /ls gave terminal sessions
-	imFailed  bool                       // the adapter is down and a retry is pending
-	imDetail  string
-	stop      bool // the daemon is shutting down; parking stays silent
+	// imFailed holds, per platform, why that entry point is down while a retry
+	// is pending. An entry point that is up has no entry.
+	imFailed map[fsp.Platform]string
+	stop     bool // the daemon is shutting down; parking stays silent
+	// baseCtx is the daemon's own context, so that an external session attached
+	// over the control socket also ends when the daemon does.
+	baseCtx context.Context
 
 	wg sync.WaitGroup
 }
@@ -87,17 +97,26 @@ func New(d Deps) *Daemon {
 		log = slog.New(slog.DiscardHandler)
 	}
 	d.IMs = normalizeAdapters(d)
-	if len(d.IMs) > 0 {
-		// Until the multi-entry routing of P3-T1 lands, the single-adapter
-		// paths below read the first entry point, which is the owner's.
-		d.IM = d.IMs[0]
-	}
 	dm := &Daemon{
 		deps:      d,
 		log:       log,
+		adapters:  make(map[fsp.Platform]ports.IMAdapter, len(d.IMs)),
 		sessions:  make(map[fsp.SessionID]*session),
 		windows:   make(map[string]string),
 		terminals: make(map[string]terminalList),
+		imFailed:  make(map[fsp.Platform]string),
+	}
+	bind := fsp.Platform(d.Config.External.WithDefaults().BindPlatform)
+	for _, im := range d.IMs {
+		dm.adapters[im.Platform()] = im
+		if dm.primary == nil || im.Platform() == bind {
+			dm.primary = im
+		}
+	}
+	// The P1 and P2 callers still read Deps.IM; it names the primary entry
+	// point so that neither they nor their tests have to change.
+	if dm.primary != nil {
+		dm.deps.IM = dm.primary
 	}
 	for _, root := range d.Config.Workspace.Roots {
 		norm, err := normalizePath(root)
@@ -124,18 +143,27 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	d.adoptOwner(runCtx)
 
+	d.mu.Lock()
+	d.baseCtx = runCtx
+	d.mu.Unlock()
+
 	inbound := make(chan fsp.Inbound, 64)
-	d.wg.Add(2)
+	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
 		if err := d.deps.Outbox.Run(runCtx); err != nil && runCtx.Err() == nil {
 			d.log.Error("outbox loop stopped", "error", err)
 		}
 	}()
-	go func() {
-		defer d.wg.Done()
-		d.runIM(runCtx, inbound)
-	}()
+	// One reader per entry point, all writing into the same inbound stream:
+	// the endpoint on each message says which platform it came from.
+	for _, im := range d.deps.IMs {
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			d.runIM(runCtx, im, inbound)
+		}()
+	}
 
 	for {
 		select {
@@ -150,12 +178,19 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 }
 
+// Status is about the primary entry point — the one external sessions bind to
+// — plus the session counts, which span every platform.
 func (d *Daemon) Status() Status {
-	st := d.deps.IM.Status()
+	var st ports.AdapterStatus
+	if d.primary != nil {
+		st = d.primary.Status()
+	}
 	d.mu.Lock()
 	online, detail := st.Online, st.Detail
-	if d.imFailed {
-		online, detail = false, d.imDetail
+	if d.primary != nil {
+		if why, down := d.imFailed[d.primary.Platform()]; down {
+			online, detail = false, why
+		}
 	}
 	total, running := 0, 0
 	for _, s := range d.sessions {
@@ -198,37 +233,41 @@ func (d *Daemon) parkStaleSessions(ctx context.Context) error {
 	return nil
 }
 
-// adoptOwner tells the ACL who scanned the QR code for the current bot.
+// adoptOwner tells the ACL who owns each entry point: every platform has an
+// owner of its own, and one of them signing in says nothing about the others.
 func (d *Daemon) adoptOwner(ctx context.Context) {
-	st := d.deps.IM.Status()
-	if st.BotID == "" || st.OwnerID == "" {
-		return
-	}
-	if err := d.deps.ACL.SetOwner(ctx, d.deps.IM.Platform(), st.BotID, st.OwnerID); err != nil {
-		d.log.Error("set owner", "error", err)
+	for _, im := range d.deps.IMs {
+		st := im.Status()
+		if st.BotID == "" || st.OwnerID == "" {
+			continue
+		}
+		if err := d.deps.ACL.SetOwner(ctx, im.Platform(), st.BotID, st.OwnerID); err != nil {
+			d.log.Error("set owner", "platform", string(im.Platform()), "error", err)
+		}
 	}
 }
 
-// runIM keeps the inbound stream alive. An expired platform session marks the
-// adapter offline and is retried every imRetryInterval instead of stopping the
-// daemon.
-func (d *Daemon) runIM(ctx context.Context, out chan<- fsp.Inbound) {
+// runIM keeps one entry point's inbound stream alive. An expired platform
+// session marks that adapter offline and is retried every imRetryInterval;
+// the other entry points and the daemon carry on.
+func (d *Daemon) runIM(ctx context.Context, im ports.IMAdapter, out chan<- fsp.Inbound) {
+	platform := im.Platform()
 	for {
 		d.mu.Lock()
-		d.imFailed, d.imDetail = false, ""
+		delete(d.imFailed, platform)
 		d.mu.Unlock()
 
-		err := d.deps.IM.Run(ctx, out)
+		err := im.Run(ctx, out)
 		if ctx.Err() != nil {
 			return
 		}
 		switch {
 		case errors.Is(err, fsp.ErrSessionExpired):
-			d.markOffline(ctx, err)
+			d.markOffline(ctx, im, err)
 		case err != nil:
-			d.log.Error("im adapter stopped", "error", err)
+			d.log.Error("im adapter stopped", "platform", string(platform), "error", err)
 			d.mu.Lock()
-			d.imFailed, d.imDetail = true, err.Error()
+			d.imFailed[platform] = err.Error()
 			d.mu.Unlock()
 		default:
 			return
@@ -241,14 +280,32 @@ func (d *Daemon) runIM(ctx context.Context, out chan<- fsp.Inbound) {
 	}
 }
 
-func (d *Daemon) markOffline(ctx context.Context, err error) {
+func (d *Daemon) markOffline(ctx context.Context, im ports.IMAdapter, err error) {
+	platform := im.Platform()
 	d.mu.Lock()
-	d.imFailed, d.imDetail = true, err.Error()
+	d.imFailed[platform] = err.Error()
 	d.mu.Unlock()
-	d.log.Warn("platform session expired, log in again", "error", err)
-	d.audit(ctx, ports.AuditEntry{Kind: "expired", Detail: err.Error()})
+	d.log.Warn("platform session expired, log in again", "platform", string(platform), "error", err)
+	d.audit(ctx, ports.AuditEntry{Kind: "expired", Detail: string(platform) + ": " + err.Error()})
 	// Chat is exactly what is unavailable, so the operator is told elsewhere.
 	d.wake(ctx, "im_offline", nil)
+}
+
+// adapter is the entry point an endpoint belongs to.
+func (d *Daemon) adapter(ep fsp.EndpointID) (ports.IMAdapter, bool) {
+	im, ok := d.adapters[ep.Platform]
+	return im, ok
+}
+
+// base is the daemon's own context, or the background one while it is not
+// running, which is how a unit test may attach without starting the daemon.
+func (d *Daemon) base() context.Context {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.baseCtx == nil {
+		return context.Background()
+	}
+	return d.baseCtx
 }
 
 // shutdown closes every live session and leaves it parked. Closed sessions keep
@@ -325,8 +382,12 @@ func (d *Daemon) window(ep fsp.EndpointID) string {
 }
 
 func (d *Daemon) typing(ctx context.Context, ep fsp.EndpointID, on bool) {
-	if err := d.deps.IM.Typing(ctx, ep, d.window(ep), on); err != nil {
-		d.log.Debug("typing indicator", "error", err)
+	im, ok := d.adapter(ep)
+	if !ok {
+		return
+	}
+	if err := im.Typing(ctx, ep, d.window(ep), on); err != nil {
+		d.log.Debug("typing indicator", "platform", string(ep.Platform), "error", err)
 	}
 }
 
@@ -391,12 +452,16 @@ func (d *Daemon) forget(id fsp.SessionID) {
 }
 
 // countManaged counts managed sessions that still hold an agent process:
-// starting, idle, running or awaiting. Parked sessions do not take a slot.
+// starting, idle, running or awaiting. Parked sessions do not take a slot, and
+// neither do the external ones, whose process the operator started elsewhere.
 func (d *Daemon) countManaged() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	n := 0
 	for _, s := range d.sessions {
+		if s.snapshot().Origin != fsp.OriginManaged {
+			continue
+		}
 		switch s.State() {
 		case fsp.StateStarting, fsp.StateIdle, fsp.StateRunning, fsp.StateAwaiting:
 			n++

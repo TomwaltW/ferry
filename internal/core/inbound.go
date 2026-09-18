@@ -88,6 +88,11 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 		d.reply(ctx, ep, "session.parked", map[string]any{"Slot": s.slot})
 		return
 	}
+	// A mirrored session the operator did not open to chat is read-only.
+	if !s.allowsInject() {
+		d.reply(ctx, ep, "inject.disabled", nil)
+		return
+	}
 
 	// 9. Anything not sent by the owner carries the sender along.
 	prompt := text

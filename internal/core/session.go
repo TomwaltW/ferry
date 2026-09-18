@@ -17,6 +17,9 @@ import (
 type session struct {
 	d    *Daemon
 	slot int
+	// external is set when the agent runs in another process, reached over the
+	// control socket rather than through a driver (spec-p3 3.3).
+	external *externalSession
 
 	mu      sync.Mutex
 	rec     fsp.Session
@@ -143,12 +146,29 @@ func (s *session) run(ctx context.Context) {
 			s.flush(ctx, false)
 		case ev, ok := <-events:
 			if !ok {
-				s.park(ctx)
+				s.gone(ctx)
 				return
 			}
 			s.handleEvent(ctx, ev)
 		}
 	}
+}
+
+// gone is what happens when the agent behind a session disappears: a managed
+// one is parked so that /use can bring it back, an external one is closed,
+// because its agent lived in a process Ferry does not own.
+func (s *session) gone(ctx context.Context) {
+	if s.external != nil {
+		s.closeExternal(ctx)
+		return
+	}
+	s.park(ctx)
+}
+
+// allowsInject reports whether chat input reaches this session. Only external
+// sessions can refuse it; a managed session exists to be written to.
+func (s *session) allowsInject() bool {
+	return s.external == nil || s.external.req.AllowInject
 }
 
 func (s *session) handleEvent(ctx context.Context, ev fsp.Event) {
