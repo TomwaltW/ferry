@@ -57,6 +57,10 @@ func validID(id string) bool {
 
 func (s *store) path(id string) string { return filepath.Join(s.dir, id+".json") }
 
+// home is the directory the sessions directory sits in, which is where the
+// initialize log goes.
+func (s *store) home() string { return filepath.Dir(s.dir) }
+
 func (s *store) save(r record) error {
 	if !validID(r.ID) {
 		return fmt.Errorf("fakeagent: save %q: %w", r.ID, errNoSession)

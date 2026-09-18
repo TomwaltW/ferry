@@ -25,8 +25,23 @@ func main() {
 func run(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("ferry-fakeagent", flag.ContinueOnError)
 	resume := fs.String("resume", "", "print that this session id was resumed, then exit")
+	version := fs.Int("acp-version", 1, "the protocol version to speak: 1 or 2")
+	auth := fs.String("auth-method", "", "advertise one auth method of this type: agent or terminal")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	switch *version {
+	case 1, 2:
+	default:
+		return fmt.Errorf("--acp-version must be 1 or 2, not %d", *version)
+	}
+	switch *auth {
+	case "", fakeagent.V2AuthAgent, fakeagent.V2AuthTerminal:
+	default:
+		return fmt.Errorf("--auth-method must be %s or %s, not %q", fakeagent.V2AuthAgent, fakeagent.V2AuthTerminal, *auth)
+	}
+	if *auth != "" && *version != 2 {
+		return fmt.Errorf("--auth-method only applies to --acp-version 2")
 	}
 
 	// --resume stands in for an agent that reattaches to a terminal; the P2
@@ -51,6 +66,9 @@ func run(args []string, out io.Writer) error {
 		}
 		defer os.RemoveAll(dir)
 		home = dir
+	}
+	if *version == 2 {
+		return fakeagent.ServeV2(ctx, os.Stdin, out, home, fakeagent.V2Options{Auth: *auth})
 	}
 	return fakeagent.Serve(ctx, os.Stdin, out, home)
 }

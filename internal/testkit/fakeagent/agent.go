@@ -65,6 +65,7 @@ func unknownSession(id acp.SessionId) error {
 func (a *agent) now() string { return a.clk.Now().UTC().Format(time.RFC3339Nano) }
 
 func (a *agent) Initialize(ctx context.Context, params acp.InitializeRequest) (acp.InitializeResponse, error) {
+	recordInitialize(a.store, int(params.ProtocolVersion))
 	return acp.InitializeResponse{
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		AgentCapabilities: acp.AgentCapabilities{
