@@ -72,3 +72,7 @@ func followSize(p gopty.Pty, out io.Writer, log *slog.Logger) func() {
 		close(done)
 	}
 }
+
+// vtOutput has nothing to do on Unix: a terminal there reads escape sequences
+// already.
+func vtOutput(out io.Writer) func() { return func() {} }

@@ -51,6 +51,25 @@ jobs:
           cache: true
       - name: go test
         run: go test ./...
+      # spec-p4-b1 3.8: B4 and B9 must really run on Windows. A SKIP, or a test
+      # that is not there at all, still leaves `go test` green, so each one has
+      # to show up as a PASS.
+      - name: B4 and B9 pass on windows
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          go test ./test/e2e/ ./internal/handoff/ -count=1 -v \
+            -run 'TestBusyRefused|TestPTYRun|TestBusyProcessInCwd|TestBusyIgnoresOwnDescendants' | tee win-b4-b9.txt
+          for t in TestBusyRefused TestPTYRun TestBusyProcessInCwd TestBusyIgnoresOwnDescendants; do
+            grep -q -- "--- PASS: $t " win-b4-b9.txt || { echo "$t did not PASS on windows"; exit 1; }
+          done
+      # spec-p4-b1 3.8 leaves bracketed paste under ConPTY to measurement: the
+      # child in TestRunConPTYEcho prints raw=<the bytes ConPTY handed it>, and
+      # this step exists so that line lands in the log even when the test passes.
+      - name: conpty bracketed paste evidence
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: go test ./internal/driver/pty/ -count=1 -v -run 'TestRunConPTYEcho|TestBracketedPaste'
 
   race:
     name: race

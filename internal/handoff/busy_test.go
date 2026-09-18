@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,23 +20,47 @@ import (
 // the pattern matches it and nothing else on the machine.
 const busyMarker = "ferry-handoff-busy-marker"
 
-// startMarked runs a process that sits in dir with the marker in its command
-// line, standing in for an agent someone left running in a terminal.
-//
-// The script is two commands on purpose: a shell handed a single one execs it
-// and the marker disappears along with the shell's own argv.
-func startMarked(t *testing.T, dir string) *exec.Cmd {
+// standInEnv turns the test binary into a stand-in process: started with it
+// set, the binary sits for standInLife and exits before any test runs. The
+// stand-ins are the test binary rather than sh and sleep so the same tests run
+// on Windows.
+const standInEnv = "FERRY_HANDOFF_STAND_IN"
+
+const standInLife = 30 * time.Second
+
+func init() {
+	if os.Getenv(standInEnv) != "" {
+		time.Sleep(standInLife)
+		os.Exit(0)
+	}
+}
+
+// startStandIn runs the test binary as a stand-in process in dir, with args on
+// its command line, and stops it when the test ends.
+func startStandIn(t *testing.T, dir string, args ...string) *exec.Cmd {
 	t.Helper()
-	cmd := exec.Command("sh", "-c", ": "+busyMarker+"; sleep 30")
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("find the test binary: %v", err)
+	}
+	cmd := exec.Command(self, args...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), standInEnv+"=1")
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start the stand-in terminal process: %v", err)
+		t.Fatalf("start a stand-in process: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 	})
 	return cmd
+}
+
+// startMarked runs a process that sits in dir with the marker in its command
+// line, standing in for an agent someone left running in a terminal.
+func startMarked(t *testing.T, dir string) *exec.Cmd {
+	t.Helper()
+	return startStandIn(t, dir, busyMarker)
 }
 
 func busyModule(t *testing.T, dir string) *handoff {
@@ -46,7 +72,7 @@ func busyModule(t *testing.T, dir string) *handoff {
 	})
 }
 
-// waitBusy polls the process table: ps and /proc both need a moment to catch up
+// waitBusy polls the process table: ps, /proc and a Toolhelp snapshot all need a moment to catch up
 // with a process that has only just started.
 func waitBusy(t *testing.T, h *handoff, ts ports.TerminalSession) bool {
 	t.Helper()
@@ -64,23 +90,13 @@ func waitBusy(t *testing.T, h *handoff, ts ports.TerminalSession) bool {
 }
 
 func TestBusyProcessInCwd(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		t.Skipf("the process table is only read on Linux and macOS, not on %s", runtime.GOOS)
-	}
 	dir := realDir(t, t.TempDir())
 	startMarked(t, dir)
 
 	h := busyModule(t, dir)
 	// The stand-in is a child of the test binary, which plays the daemon, so
 	// the daemon is moved to an unrelated process for this test.
-	sibling := exec.Command("sleep", "30")
-	if err := sibling.Start(); err != nil {
-		t.Fatalf("start the stand-in daemon process: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = sibling.Process.Kill()
-		_ = sibling.Wait()
-	})
+	sibling := startStandIn(t, t.TempDir())
 	h.selfPID = sibling.Process.Pid
 
 	if !waitBusy(t, h, ports.TerminalSession{Agent: "demo", Cwd: dir}) {
@@ -99,9 +115,6 @@ func TestBusyProcessInCwd(t *testing.T) {
 }
 
 func TestBusyIgnoresOwnDescendants(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		t.Skipf("the process table is only read on Linux and macOS, not on %s", runtime.GOOS)
-	}
 	dir := realDir(t, t.TempDir())
 	startMarked(t, dir)
 
@@ -174,5 +187,90 @@ func TestDescendantOf(t *testing.T) {
 	// A cycle in the table must not spin forever.
 	if descendantOf(map[int]int{1: 2, 2: 1}, 1, 99) {
 		t.Errorf("descendantOf found an ancestor in a cycle")
+	}
+}
+
+// TestProcessMatchWindowsCommandLine checks the built-in patterns against the
+// ways each platform writes the same program. The patterns are plain regular
+// expressions, so both platforms' are checked everywhere.
+func TestProcessMatchWindowsCommandLine(t *testing.T) {
+	names := map[string]string{
+		"kimi":       "kimi",
+		"qwen-code":  "qwen",
+		"opencode":   "opencode",
+		"claude-acp": "claude",
+		"codex-acp":  "codex",
+	}
+	for agent, prog := range names {
+		p, ok := findProfile(Profiles, agent)
+		if !ok {
+			t.Fatalf("no built-in profile for %s", agent)
+		}
+		if want := processMatch(runtime.GOOS, prog); p.ProcessMatch != want {
+			t.Errorf("%s: ProcessMatch = %q, want the %s pattern %q", agent, p.ProcessMatch, runtime.GOOS, want)
+		}
+
+		// The Unix pattern is the one P2 shipped, character for character.
+		if got, want := processMatch("linux", prog), `(^|/)`+prog+`( |$)`; got != want {
+			t.Errorf("%s: the Unix pattern is %q, want it unchanged as %q", agent, got, want)
+		}
+
+		win := regexp.MustCompile(processMatch("windows", prog))
+		for _, line := range []string{
+			`"C:\Program Files\` + prog + `\` + prog + `.exe" acp`,
+			`"C:\Program Files\` + prog + `\` + prog + `.exe"`,
+			`C:\Users\me\.local\bin\` + prog + `.exe acp`,
+			`C:\Users\me\.local\bin\` + strings.ToUpper(prog) + `.EXE`,
+			`C:/tools/` + prog + `.exe --acp`,
+			prog + ` acp`,
+			prog + `.exe`,
+		} {
+			if !win.MatchString(line) {
+				t.Errorf("%s: the Windows pattern does not match %q", agent, line)
+			}
+		}
+		for _, line := range []string{
+			`C:\tools\` + prog + `\helper.exe`,
+			`C:\tools\` + prog + `-helper.exe`,
+			`C:\tools\my` + prog + `.exe`,
+			`notepad.exe C:\notes\` + prog + `.txt`,
+		} {
+			if win.MatchString(line) {
+				t.Errorf("%s: the Windows pattern matches %q, which is some other program", agent, line)
+			}
+		}
+
+		unix := regexp.MustCompile(processMatch("linux", prog))
+		for line, want := range map[string]bool{
+			"/usr/local/bin/" + prog + " acp":   true,
+			prog:                                true,
+			"node /usr/local/bin/" + prog:       true,
+			"/opt/" + prog + "/helper":          false,
+			"/usr/bin/my" + prog:                false,
+			"/usr/bin/" + prog + "-helper":      false,
+			`C:\Program Files\` + prog + ".exe": false,
+		} {
+			if got := unix.MatchString(line); got != want {
+				t.Errorf("%s: the Unix pattern on %q = %v, want %v", agent, line, got, want)
+			}
+		}
+	}
+}
+
+func TestCwdCompareIgnoresCaseOnWindows(t *testing.T) {
+	if !sameDir("windows", `C:\Users\Me\Work`, `c:\users\me\WORK`) {
+		t.Error("two spellings of one Windows directory compare as different places")
+	}
+	if sameDir("windows", `C:\Users\Me\Work`, `C:\Users\Me\Work2`) {
+		t.Error("two Windows directories compare as the same place")
+	}
+	if sameDir("linux", "/home/me/Work", "/home/me/work") {
+		t.Error("Linux directories that differ in case compare as the same place")
+	}
+	if sameDir("darwin", "/Users/me/Work", "/Users/me/work") {
+		t.Error("macOS directories that differ in case compare as the same place: the pre-P4 comparison was exact")
+	}
+	if !sameDir("linux", "/home/me/work", "/home/me/work") {
+		t.Error("a Linux directory does not compare as itself")
 	}
 }

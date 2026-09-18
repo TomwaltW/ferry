@@ -25,6 +25,7 @@ import (
 	"github.com/TomwaltW/ferry/internal/core"
 	"github.com/TomwaltW/ferry/internal/driver/acp"
 	"github.com/TomwaltW/ferry/internal/fsp"
+	"github.com/TomwaltW/ferry/internal/handoff"
 	"github.com/TomwaltW/ferry/internal/i18n"
 	"github.com/TomwaltW/ferry/internal/im/channelhost"
 	"github.com/TomwaltW/ferry/internal/im/feishu"
@@ -113,6 +114,11 @@ type rig struct {
 
 	// patience is how long waitFor waits; settle unless a test needs longer.
 	patience time.Duration
+
+	// handoff wires terminal handoff (spec-p2) into the daemon; set by
+	// withHandoff. Off by default so /ls in the other tests lists only the
+	// sessions Ferry owns.
+	handoff bool
 }
 
 // rigOption adjusts the configuration before the daemon first starts.
@@ -249,10 +255,18 @@ func (r *rig) start() {
 	}
 	r.driver = acp.NewVersioned(log, func(agent string) string { return versions[agent] })
 	r.aclmod = acl.New(r.cfg, st, clock.Real())
+	drivers := map[fsp.DriverKind]ports.Driver{fsp.DriverACP: r.driver}
+	var ho ports.Handoff
+	if r.handoff {
+		ho = handoff.New(handoff.Options{
+			Roots: roots, Agents: r.cfg.Agents, Profiles: r.cfg.Handoff.Profiles,
+			Registry: reg, Drivers: drivers, Store: st, Clock: clock.Real(), Log: log,
+		})
+	}
 	r.daemon = core.New(core.Deps{
 		Config: r.cfg, Home: r.home, IMs: ims,
-		Drivers:  map[fsp.DriverKind]ports.Driver{fsp.DriverACP: r.driver},
-		Registry: reg, Store: st, Outbox: ob, ACL: r.aclmod,
+		Drivers:  drivers,
+		Registry: reg, Store: st, Outbox: ob, ACL: r.aclmod, Handoff: ho,
 		Approvals: ap, Commands: command.New(), I18n: r.bundle, Clock: clock.Real(), Log: log,
 	})
 
