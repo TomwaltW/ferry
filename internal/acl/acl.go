@@ -42,58 +42,72 @@ func New(cfg config.Config, st ports.Store, clk clock.Clock) ports.ACL {
 	return &acl{cfg: cfg, st: st, clk: clk}
 }
 
-// approvers is the list that governs one endpoint: [feishu] approvers for a
-// Feishu endpoint, the [wechat] list for everything else — the fake platform,
-// and the channel:<name> a third-party server appears as.
-//
-// Feishu goes through WithDefaults rather than reading the field, because
-// config.Load does not apply it: an omitted [feishu] approvers arrives here
-// nil, and taking that literally would leave nobody able to approve anything on
-// Feishu — fails closed, and says nothing about why. WithDefaults answers with
-// the ["owner"] that config documents, so the default is stated in one place
-// instead of two that can drift.
+// approvers is the list that governs one entry point. config.ApproversFor is
+// the only way to it (spec-p4-b1 3.3): it knows each platform's table, and it
+// answers ["owner"] where a table leaves the list out — config.Load does not
+// apply the defaults — or where no table exists, so no entry point ends up
+// where nobody may approve anything.
 func (a *acl) approvers(p fsp.Platform) []string {
-	if p == fsp.PlatformFeishu {
-		return a.cfg.Feishu.WithDefaults().Approvers
-	}
-	return a.cfg.WeChat.Approvers
+	return a.cfg.ApproversFor(p)
 }
 
-// Allowed reports whether the sender has any role at the endpoint. A store
-// error denies access rather than opening it.
-func (a *acl) Allowed(ep fsp.EndpointID, senderID string) bool {
-	role, err := a.st.Role(context.Background(), ep, senderID)
-	if err != nil {
+// isOwner reports whether the sender owns the bot the endpoint belongs to. The
+// owner is recognised on every endpoint of that bot (spec-p4-b1 3.3): SetOwner
+// records the role at the owner's own endpoint, and a different chat does not
+// change who is talking.
+func (a *acl) isOwner(ep fsp.EndpointID, senderID string) bool {
+	return IsBotOwner(context.Background(), a.st, ep, senderID)
+}
+
+// IsBotOwner reports whether senderID is the owner of the bot behind ep, on
+// whichever endpoint of that bot they speak: the owner role at ep itself, or
+// the one SetOwner recorded at the sender's own endpoint. A store error counts
+// as not the owner.
+func IsBotOwner(ctx context.Context, st ports.Store, ep fsp.EndpointID, senderID string) bool {
+	if senderID == "" {
 		return false
 	}
-	return role != ""
+	own := fsp.EndpointID{Platform: ep.Platform, BotID: ep.BotID, PeerID: senderID}
+	if role, err := st.Role(ctx, own, senderID); err == nil && role == RoleOwner {
+		return true
+	}
+	if own == ep {
+		return false
+	}
+	role, err := st.Role(ctx, ep, senderID)
+	return err == nil && role == RoleOwner
 }
 
-// IsApprover reports whether the sender may decide approvals: the owner when
-// the configuration lists "owner", anyone holding the approver role, and
-// anyone named in the approver list of the endpoint's own platform.
+// Allowed reports whether the sender has any role at the endpoint, or owns
+// the bot. A store error denies access rather than opening it.
+func (a *acl) Allowed(ep fsp.EndpointID, senderID string) bool {
+	role, err := a.st.Role(context.Background(), ep, senderID)
+	if err == nil && role != "" {
+		return true
+	}
+	return a.isOwner(ep, senderID)
+}
+
+// IsApprover reports whether the sender may decide approvals: anyone named in
+// the approver list of the endpoint's own entry point, anyone holding the
+// approver role there, and the bot owner when that list says "owner".
 func (a *acl) IsApprover(ep fsp.EndpointID, senderID string) bool {
 	approvers := a.approvers(ep.Platform)
+	ownerListed := false
 	for _, who := range approvers {
-		if who != RoleOwner && who == senderID {
+		if who == config.ApproverOwner {
+			ownerListed = true
+			continue
+		}
+		if who == senderID {
 			return true
 		}
 	}
 	role, err := a.st.Role(context.Background(), ep, senderID)
-	if err != nil {
-		return false
-	}
-	switch role {
-	case RoleApprover:
+	if err == nil && role == RoleApprover {
 		return true
-	case RoleOwner:
-		for _, who := range approvers {
-			if who == RoleOwner {
-				return true
-			}
-		}
 	}
-	return false
+	return ownerListed && a.isOwner(ep, senderID)
 }
 
 // SetOwner records the scanning user as the owner of their own endpoint.

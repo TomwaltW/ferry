@@ -1,6 +1,7 @@
 package approval
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -84,7 +85,7 @@ func normalizeKind(k string) string {
 
 // evaluate returns the action for the request: the first matching rule wins,
 // and a request that matches nothing falls to the configured default.
-func (m *manager) evaluate(req fsp.ApprovalRequest) string {
+func (m *manager) evaluate(ctx context.Context, req fsp.ApprovalRequest) string {
 	kind := normalizeKind(req.ToolKind)
 	var (
 		outsideKnown bool
@@ -96,7 +97,7 @@ func (m *manager) evaluate(req fsp.ApprovalRequest) string {
 		}
 		if r.outside != nil {
 			if !outsideKnown {
-				anyOutside = m.anyOutside(req.Paths)
+				anyOutside = anyOutsideOf(req.Paths, m.sessionRoots(ctx, req.Session))
 				outsideKnown = true
 			}
 			if *r.outside {
@@ -117,10 +118,31 @@ func (m *manager) evaluate(req fsp.ApprovalRequest) string {
 	return m.defaultAction
 }
 
-// anyOutside reports whether at least one path lies outside the workspace.
-func (m *manager) anyOutside(paths []string) bool {
+// sessionRoots is the workspace a session's paths are judged against: the
+// roots of its owner (spec-p4-b1 3.4), or the shared roots without a
+// Workspaces. When the owner or their roots cannot be had the answer is no
+// roots at all, so every path counts as outside — the strictest reading.
+func (m *manager) sessionRoots(ctx context.Context, id fsp.SessionID) []string {
+	if m.workspaces == nil {
+		return m.roots
+	}
+	owner, err := m.sessionOwner(ctx, id)
+	if err != nil {
+		m.log.Error("approval: session owner for the workspace check", "session", id, "error", err)
+		return nil
+	}
+	roots, err := m.workspaces.Roots(ctx, owner, owner.PeerID)
+	if err != nil {
+		m.log.Error("approval: workspace roots", "session", id, "error", err)
+		return nil
+	}
+	return normalizeRoots(roots)
+}
+
+// anyOutsideOf reports whether at least one path lies outside roots.
+func anyOutsideOf(paths, roots []string) bool {
 	for _, p := range paths {
-		if !m.inside(p) {
+		if !inside(p, roots) {
 			return true
 		}
 	}
@@ -128,9 +150,9 @@ func (m *manager) anyOutside(paths []string) bool {
 }
 
 // inside resolves p to an absolute, symlink-free path and reports whether it
-// sits under a workspace root. A path that cannot be resolved counts as
-// outside, so a symlink pointing out of the workspace cannot sneak in.
-func (m *manager) inside(p string) bool {
+// sits under one of roots. A path that cannot be resolved counts as outside,
+// so a symlink pointing out of the workspace cannot sneak in.
+func inside(p string, roots []string) bool {
 	if p == "" {
 		return false
 	}
@@ -142,7 +164,7 @@ func (m *manager) inside(p string) bool {
 	if err != nil {
 		return false
 	}
-	for _, root := range m.roots {
+	for _, root := range roots {
 		if resolved == root || strings.HasPrefix(resolved, root+string(filepath.Separator)) {
 			return true
 		}

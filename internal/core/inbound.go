@@ -94,11 +94,11 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 		return
 	}
 
-	// 9. Anything not sent by the owner carries the sender along.
+	// 9. Anything not sent by the bot owner carries the sender along.
 	prompt := text
-	if role, err := d.deps.Store.Role(ctx, ep, in.SenderID); err != nil {
+	if owner, err := d.isOwner(ctx, ep, in.SenderID); err != nil {
 		d.log.Error("role", "endpoint", ep.String(), "error", err)
-	} else if role != "owner" {
+	} else if !owner {
 		prompt = "[from " + in.SenderID + "] " + text
 	}
 	if len(attachments) != 0 {
