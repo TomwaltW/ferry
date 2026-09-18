@@ -1,0 +1,15 @@
+{
+  "name": "ferry",
+  "displayName": "Ferry",
+  "description": "Reach this Claude Code session from WeChat or Feishu through the Ferry daemon, and approve tool use from the same chat.",
+  "version": "0.3.0",
+  "author": {
+    "name": "Ferry",
+    "url": "https://github.com/TomwaltW/ferry"
+  },
+  "homepage": "https://github.com/TomwaltW/ferry",
+  "repository": "https://github.com/TomwaltW/ferry",
+  "license": "Apache-2.0",
+  "keywords": ["channel", "im", "wechat", "feishu", "remote"],
+  "mcpServers": "./.mcp.json"
+}
