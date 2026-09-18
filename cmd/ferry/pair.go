@@ -30,7 +30,7 @@ var pairCmd = &cobra.Command{
 		}
 		defer st.Close()
 
-		_, sender, err := acl.New(cfg.WeChat, st, clock.Real()).ConfirmPairing(cmd.Context(), args[0])
+		_, sender, err := acl.New(cfg, st, clock.Real()).ConfirmPairing(cmd.Context(), args[0])
 		if err != nil {
 			fmt.Fprintln(cmd.OutOrStdout(), bundle.T(lang, "pair.invalid", nil))
 			return errSilentExit1

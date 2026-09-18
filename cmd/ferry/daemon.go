@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/TomwaltW/ferry/internal/control"
 	"github.com/TomwaltW/ferry/internal/core"
 	"github.com/TomwaltW/ferry/internal/fsp"
 	"github.com/spf13/cobra"
@@ -196,6 +197,21 @@ var daemonCmd = &cobra.Command{
 		go func() {
 			defer wg.Done()
 			writeStatusLoop(ctx, a, filepath.Join(home, statusName))
+		}()
+
+		// The control server is how ferry back, ferry proxy, ferry channel and
+		// ferry run reach this daemon. Without it they fall back to working
+		// alone, so a failure is logged rather than fatal.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := control.ServeWith(ctx, control.ServeOptions{
+				Home:    home,
+				Handler: a.Daemon.ControlHandler(),
+				Log:     log,
+			}); err != nil {
+				log.Error("control server stopped", "error", err)
+			}
 		}()
 
 		log.Info("ferry daemon started", "home", home, "pid", os.Getpid())
