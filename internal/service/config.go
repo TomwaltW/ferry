@@ -10,7 +10,7 @@
 package service
 
 import (
-	"path/filepath"
+	"path"
 
 	kservice "github.com/kardianos/service"
 )
@@ -84,7 +84,11 @@ func BuildConfig(goos string, p Params) kservice.Config {
 		c.Option["KeepAlive"] = true
 		// launchd's own stdout and stderr files; the daemon's log is
 		// <home>/logs/ferry.log as with ferry daemon.
-		c.Option["LogDirectory"] = filepath.Join(p.Home, "logs")
+		// path.Join, not filepath.Join: this is a darwin LaunchAgent definition
+		// and BuildConfig is a pure function of goos, so the separator has to
+		// follow the target rather than whatever host generated it. On Windows
+		// filepath.Join would emit \Users\alice\.ferry\logs.
+		c.Option["LogDirectory"] = path.Join(p.Home, "logs")
 	case "linux":
 		c.Option["UserService"] = true
 		c.Option["Restart"] = "always"

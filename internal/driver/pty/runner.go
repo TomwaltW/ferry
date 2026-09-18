@@ -83,7 +83,14 @@ func run(ctx context.Context, opts Options) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("pty: open a pseudo terminal: %w", err)
 	}
-	defer p.Close()
+	// Two places legitimately close the pseudo terminal: the normal path below,
+	// which has to close it before waiting on copyOut, and this defer for the
+	// early returns in between. It must happen exactly once — go-pty's Windows
+	// Close calls ClosePseudoConsole unguarded, so closing twice frees the same
+	// handle twice and corrupts the heap (exit status 0xc0000374).
+	var closeOnce sync.Once
+	closePty := func() { closeOnce.Do(func() { _ = p.Close() }) }
+	defer closePty()
 	r.pty = p
 
 	cwd, err := os.Getwd()
@@ -104,8 +111,13 @@ func run(ctx context.Context, opts Options) (int, error) {
 	defer restore()
 	restoreOut := vtOutput(opts.Out)
 	defer restoreOut()
+	// Same shape: the watcher has to stop before the pseudo terminal goes away,
+	// because it resizes it on a timer and a resize of a closed pseudo console
+	// reaches freed memory.
 	stopResize := followSize(p, opts.Out, r.log)
-	defer stopResize()
+	var stopOnce sync.Once
+	stopWatch := func() { stopOnce.Do(stopResize) }
+	defer stopWatch()
 
 	if err := r.cmd.Start(); err != nil {
 		return 0, fmt.Errorf("pty: start %s: %w", opts.Command[0], err)
@@ -139,7 +151,8 @@ func run(ctx context.Context, opts Options) (int, error) {
 	// pseudo terminal ends the output loop, and hanging up on the daemon ends
 	// the one waiting on it.
 	cancel()
-	p.Close()
+	stopWatch()
+	closePty()
 	r.detach()
 	wg.Wait()
 
