@@ -148,83 +148,95 @@ var daemonCmd = &cobra.Command{
 	Short: "Run the Ferry daemon",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		home := homeDir()
-		bundle := defaultBundle()
+		return runDaemon(signalContext, homeDir(), cmd.ErrOrStderr(), daemonForeground)
+	},
+}
 
-		lock, holder, err := acquireLock(filepath.Join(home, lockName))
-		if errors.Is(err, errAlreadyRunning) {
-			cmd.PrintErrln(bundle.T(defaultLang(home), "cli.daemon_running", map[string]any{"PID": holder}))
+// signalContext is ferry daemon's lifetime: until SIGINT or SIGTERM.
+func signalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+}
+
+// runDaemon is the daemon. Once it is assembled it runs until the context
+// from lifetime is cancelled: ferry daemon cancels it on a signal, ferry
+// service run when the service manager stops the service. Messages for the
+// user go to errOut, and so does the log when foreground is set.
+func runDaemon(lifetime func() (context.Context, context.CancelFunc), home string, errOut io.Writer, foreground bool) error {
+	bundle := defaultBundle()
+
+	lock, holder, err := acquireLock(filepath.Join(home, lockName))
+	if errors.Is(err, errAlreadyRunning) {
+		fmt.Fprintln(errOut, bundle.T(defaultLang(home), "cli.daemon_running", map[string]any{"PID": holder}))
+		return errSilentExit1
+	}
+	if err != nil {
+		return err
+	}
+	defer lock.release()
+
+	logFile, err := newRotatingWriter(filepath.Join(home, "logs", "ferry.log"), logMaxBytes, logKeepCopies)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	var sink io.Writer = logFile
+	if foreground {
+		sink = io.MultiWriter(logFile, errOut)
+	}
+	log := slog.New(slog.NewTextHandler(sink, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	a, err := assemble(home, log)
+	if err != nil {
+		if errors.Is(err, fsp.ErrNotFound) {
+			fmt.Fprintln(errOut, bundle.T(defaultLang(home), "cli.need_init", nil))
 			return errSilentExit1
 		}
-		if err != nil {
-			return err
+		// A database that will not open is fatal and exits with code 2.
+		if strings.Contains(err.Error(), "open database") {
+			fmt.Fprintln(errOut, "ferry:", err)
+			return errExit2
 		}
-		defer lock.release()
+		return err
+	}
+	defer a.Close()
 
-		logFile, err := newRotatingWriter(filepath.Join(home, "logs", "ferry.log"), logMaxBytes, logKeepCopies)
-		if err != nil {
-			return err
+	ctx, stop := lifetime()
+	defer stop()
+
+	// core.Run owns the outbox loop; starting a second one here would
+	// give the same outbox two competing senders.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		writeStatusLoop(ctx, a, filepath.Join(home, statusName))
+	}()
+
+	// The control server is how ferry back, ferry proxy, ferry channel and
+	// ferry run reach this daemon. Without it they fall back to working
+	// alone, so a failure is logged rather than fatal.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := control.ServeWith(ctx, control.ServeOptions{
+			Home:    home,
+			Handler: a.Daemon.ControlHandler(),
+			Log:     log,
+		}); err != nil {
+			log.Error("control server stopped", "error", err)
 		}
-		defer logFile.Close()
-		var sink io.Writer = logFile
-		if daemonForeground {
-			sink = io.MultiWriter(logFile, cmd.ErrOrStderr())
-		}
-		log := slog.New(slog.NewTextHandler(sink, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	}()
 
-		a, err := assemble(home, log)
-		if err != nil {
-			if errors.Is(err, fsp.ErrNotFound) {
-				cmd.PrintErrln(bundle.T(defaultLang(home), "cli.need_init", nil))
-				return errSilentExit1
-			}
-			// A database that will not open is fatal and exits with code 2.
-			if strings.Contains(err.Error(), "open database") {
-				cmd.PrintErrln("ferry:", err)
-				return errExit2
-			}
-			return err
-		}
-		defer a.Close()
-
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-
-		// core.Run owns the outbox loop; starting a second one here would
-		// give the same outbox two competing senders.
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			writeStatusLoop(ctx, a, filepath.Join(home, statusName))
-		}()
-
-		// The control server is how ferry back, ferry proxy, ferry channel and
-		// ferry run reach this daemon. Without it they fall back to working
-		// alone, so a failure is logged rather than fatal.
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := control.ServeWith(ctx, control.ServeOptions{
-				Home:    home,
-				Handler: a.Daemon.ControlHandler(),
-				Log:     log,
-			}); err != nil {
-				log.Error("control server stopped", "error", err)
-			}
-		}()
-
-		log.Info("ferry daemon started", "home", home, "pid", os.Getpid())
-		err = a.Daemon.Run(ctx)
-		stop()
-		wg.Wait()
-		_ = os.Remove(filepath.Join(home, statusName))
-		if err != nil && !errors.Is(err, context.Canceled) {
-			return err
-		}
-		log.Info("ferry daemon stopped")
-		return nil
-	},
+	log.Info("ferry daemon started", "home", home, "pid", os.Getpid())
+	err = a.Daemon.Run(ctx)
+	stop()
+	wg.Wait()
+	_ = os.Remove(filepath.Join(home, statusName))
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	log.Info("ferry daemon stopped")
+	return nil
 }
 
 func writeStatusLoop(ctx context.Context, a *assembly, path string) {
