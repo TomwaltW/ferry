@@ -36,6 +36,8 @@ type fakeClient struct {
 	mu        sync.Mutex
 	inbox     chan Message
 	sent      []sentMessage
+	cards     []Card
+	onCard    func(CardAction) (string, bool) // set by Start
 	startErrs []error
 	sendErrs  []error
 	pingErr   error
@@ -49,9 +51,10 @@ func newFakeClient() *fakeClient {
 	return &fakeClient{inbox: make(chan Message, 8), started: make(chan struct{}, 8)}
 }
 
-func (c *fakeClient) Start(ctx context.Context, onMessage func(Message)) error {
+func (c *fakeClient) Start(ctx context.Context, onMessage func(Message), onCardAction func(CardAction) (string, bool)) error {
 	c.mu.Lock()
 	c.starts++
+	c.onCard = onCardAction
 	var err error
 	if len(c.startErrs) != 0 {
 		err, c.startErrs = c.startErrs[0], c.startErrs[1:]
@@ -76,6 +79,33 @@ func (c *fakeClient) Start(ctx context.Context, onMessage func(Message)) error {
 
 func (c *fakeClient) SendText(_ context.Context, openID, text string) (string, error) {
 	return c.record(sentMessage{kind: "text", openID: openID, body: text})
+}
+
+// SendCard books the card as a "card" message with its body, and keeps the
+// card itself in cards.
+func (c *fakeClient) SendCard(_ context.Context, openID string, card Card) (string, error) {
+	id, err := c.record(sentMessage{kind: "card", openID: openID, body: card.Body})
+	if err == nil {
+		c.mu.Lock()
+		c.cards = append(c.cards, card)
+		c.mu.Unlock()
+	}
+	return id, err
+}
+
+// click calls the card handler of the running Start, as the SDK does from
+// its own goroutine.
+func (c *fakeClient) click(act CardAction) (string, bool) {
+	c.mu.Lock()
+	h := c.onCard
+	c.mu.Unlock()
+	return h(act)
+}
+
+func (c *fakeClient) sentCards() []Card {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]Card(nil), c.cards...)
 }
 
 func (c *fakeClient) SendFile(_ context.Context, openID, path string) (string, error) {
@@ -126,17 +156,23 @@ type rig struct {
 	cancel context.CancelFunc
 }
 
-func newRig(t *testing.T) *rig {
+// newRig builds an adapter on a fake client; each option adjusts the Options
+// before the adapter is made.
+func newRig(t *testing.T, options ...func(*Options)) *rig {
 	t.Helper()
 	c := newFakeClient()
 	clk := clock.NewFake(epoch)
-	a, err := NewWithClient(Options{
+	opts := Options{
 		Config: config.FeishuConfig{Enabled: true, AppID: testAppID, OwnerOpenID: testOwner},
 		Secret: testSecret,
 		Home:   t.TempDir(),
 		Clock:  clk,
 		Log:    slog.New(slog.DiscardHandler),
-	}, c)
+	}
+	for _, o := range options {
+		o(&opts)
+	}
+	a, err := NewWithClient(opts, c)
 	if err != nil {
 		t.Fatalf("NewWithClient: %v", err)
 	}

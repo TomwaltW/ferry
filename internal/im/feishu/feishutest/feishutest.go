@@ -1,10 +1,11 @@
 // Package feishutest is the fake Feishu client the tests and the end-to-end
 // rig drive the adapter with. It keeps no network and no SDK behind it: a test
-// pushes inbound messages in and reads the sends back out.
+// pushes inbound messages and card clicks in and reads the sends back out.
 package feishutest
 
 import (
 	"context"
+	"strconv"
 	"sync"
 
 	"github.com/TomwaltW/ferry/internal/im/feishu"
@@ -12,24 +13,41 @@ import (
 
 // Sent is one message the adapter handed to the client.
 type Sent struct {
-	Kind   string // text | file
+	Kind   string // text | file | card
 	OpenID string
-	Text   string // the text, or the path of a file
+	Text   string // the text, the path of a file, or the body of a card
+	// Card is the whole card, buttons and their values included, when Kind
+	// is KindCard.
+	Card *feishu.Card
 }
 
-// The two kinds a Sent can have.
+// The kinds a Sent can have.
 const (
 	KindText = "text"
 	KindFile = "file"
+	KindCard = "card"
 )
+
+// click is one simulated button click on its way to a running Start.
+type click struct {
+	act   feishu.CardAction
+	reply chan clickReply
+}
+
+type clickReply struct {
+	toast string
+	ok    bool
+}
 
 // Client is a feishu.Client a test drives by hand. The zero value is not
 // usable; call New.
 type Client struct {
 	mu sync.Mutex
 	// inbox carries the messages Deliver pushes to a running Start.
-	inbox chan feishu.Message
-	sent  []Sent
+	inbox  chan feishu.Message
+	clicks chan click
+	events int // numbers the event IDs of simulated clicks
+	sent   []Sent
 	// startErrs are handed to successive Start calls; an exhausted list means
 	// Start blocks until its context ends, which is a healthy connection.
 	startErrs []error
@@ -41,7 +59,7 @@ type Client struct {
 }
 
 func New() *Client {
-	return &Client{inbox: make(chan feishu.Message, 16), running: make(chan struct{})}
+	return &Client{inbox: make(chan feishu.Message, 16), clicks: make(chan click), running: make(chan struct{})}
 }
 
 // FailStart makes the next len(errs) Start calls return those errors instead
@@ -70,6 +88,50 @@ func (c *Client) FailPing(err error) {
 // Deliver hands one message to whoever is inside Start.
 func (c *Client) Deliver(m feishu.Message) { c.inbox <- m }
 
+// Click simulates openID clicking a card button whose value is v, the way
+// Feishu reports it over the long-lived connection, with a fresh event ID. It
+// waits for the adapter inside Start to handle the click and returns the toast
+// it answered with; ok is false when the adapter left the callback
+// unanswered, or when ctx ended first (for example, nothing is inside Start).
+// Take v from a recorded card: Sent()[i].Card.Buttons[j].Value.
+func (c *Client) Click(ctx context.Context, openID string, v feishu.CardValue) (toast string, ok bool) {
+	c.mu.Lock()
+	c.events++
+	id := "ev-" + strconv.Itoa(c.events)
+	c.mu.Unlock()
+	return c.ClickAction(ctx, feishu.CardAction{EventID: id, Token: "tok-" + id, OpenID: openID, Value: v.Map()})
+}
+
+// ClickAction hands one card callback, exactly as given, to the adapter inside
+// Start; it is Click for values and IDs a test wants to choose itself.
+func (c *Client) ClickAction(ctx context.Context, act feishu.CardAction) (toast string, ok bool) {
+	reply := make(chan clickReply, 1)
+	select {
+	case c.clicks <- click{act: act, reply: reply}:
+	case <-ctx.Done():
+		return "", false
+	}
+	select {
+	case r := <-reply:
+		return r.toast, r.ok
+	case <-ctx.Done():
+		return "", false
+	}
+}
+
+// Cards returns the cards the adapter has sent so far.
+func (c *Client) Cards() []Sent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var cards []Sent
+	for _, s := range c.sent {
+		if s.Kind == KindCard {
+			cards = append(cards, s)
+		}
+	}
+	return cards
+}
+
 // Running is closed once Start has begun, so a test can wait for the
 // connection before delivering anything.
 func (c *Client) Running() <-chan struct{} {
@@ -92,7 +154,7 @@ func (c *Client) Sent() []Sent {
 	return append([]Sent(nil), c.sent...)
 }
 
-func (c *Client) Start(ctx context.Context, onMessage func(feishu.Message)) error {
+func (c *Client) Start(ctx context.Context, onMessage func(feishu.Message), onCardAction func(feishu.CardAction) (string, bool)) error {
 	c.mu.Lock()
 	c.starts++
 	var err error
@@ -111,12 +173,23 @@ func (c *Client) Start(ctx context.Context, onMessage func(feishu.Message)) erro
 			return nil
 		case m := <-c.inbox:
 			onMessage(m)
+		case cl := <-c.clicks:
+			toast, ok := onCardAction(cl.act)
+			cl.reply <- clickReply{toast: toast, ok: ok}
 		}
 	}
 }
 
 func (c *Client) SendText(ctx context.Context, openID, text string) (string, error) {
 	return c.record(Sent{Kind: KindText, OpenID: openID, Text: text})
+}
+
+// SendCard records the card; its Text is the card body, so a test reading
+// texts sees what the card says.
+func (c *Client) SendCard(ctx context.Context, openID string, card feishu.Card) (string, error) {
+	cp := card
+	cp.Buttons = append([]feishu.CardButton(nil), card.Buttons...)
+	return c.record(Sent{Kind: KindCard, OpenID: openID, Text: card.Body, Card: &cp})
 }
 
 func (c *Client) SendFile(ctx context.Context, openID, path string) (string, error) {

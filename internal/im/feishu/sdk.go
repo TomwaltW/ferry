@@ -12,6 +12,7 @@ import (
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkdispatcher "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	larkcallback "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkauth "github.com/larksuite/oapi-sdk-go/v3/service/auth/v3"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
@@ -27,11 +28,15 @@ const tooManyRequests = 99991400
 // receiveIDTypeOpenID names the kind of ID the send calls address.
 const receiveIDTypeOpenID = "open_id"
 
-// msgTypeText and msgTypeFile are the two message types this round sends.
+// The message types this package sends.
 const (
-	msgTypeText = "text"
-	msgTypeFile = "file"
+	msgTypeText = larkim.MsgTypeText
+	msgTypeFile = larkim.MsgTypeFile
+	msgTypeCard = larkim.MsgTypeInteractive
 )
+
+// toastInfo is the toast type used to acknowledge a click.
+const toastInfo = "info"
 
 // fileTypeStream is what a file of no particular kind is uploaded as.
 const fileTypeStream = "stream"
@@ -74,13 +79,28 @@ func domainURL(domain string) string {
 
 // Start opens the WebSocket connection and blocks until ctx ends or the SDK
 // gives up reconnecting.
-func (c *sdkClient) Start(ctx context.Context, onMessage func(Message)) error {
+func (c *sdkClient) Start(ctx context.Context, onMessage func(Message), onCardAction func(CardAction) (string, bool)) error {
 	handler := larkdispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(func(_ context.Context, ev *larkim.P2MessageReceiveV1) error {
 			if m, ok := convertMessage(ev); ok {
 				onMessage(m)
 			}
 			return nil
+		}).
+		// Card clicks arrive over the same connection (card.action.trigger),
+		// so no public callback address is needed.
+		OnP2CardActionTrigger(func(_ context.Context, ev *larkcallback.CardActionTriggerEvent) (*larkcallback.CardActionTriggerResponse, error) {
+			// An empty response acknowledges the callback without a toast; a
+			// nil one would reach Feishu as the JSON null.
+			resp := &larkcallback.CardActionTriggerResponse{}
+			act, ok := convertCardAction(ev)
+			if !ok {
+				return resp, nil
+			}
+			if toast, ok := onCardAction(act); ok && toast != "" {
+				resp.Toast = &larkcallback.Toast{Type: toastInfo, Content: toast}
+			}
+			return resp, nil
 		})
 	cli := larkws.NewClient(c.appID, c.appSecret,
 		larkws.WithEventHandler(handler),
@@ -110,6 +130,21 @@ func convertMessage(ev *larkim.P2MessageReceiveV1) (Message, bool) {
 		m.OpenID = deref(ev.Event.Sender.SenderId.OpenId)
 	}
 	return m, true
+}
+
+// convertCardAction narrows one card callback to what this package needs.
+func convertCardAction(ev *larkcallback.CardActionTriggerEvent) (CardAction, bool) {
+	if ev == nil || ev.Event == nil || ev.Event.Action == nil {
+		return CardAction{}, false
+	}
+	act := CardAction{Token: ev.Event.Token, Value: ev.Event.Action.Value}
+	if ev.EventV2Base != nil && ev.EventV2Base.Header != nil {
+		act.EventID = ev.EventV2Base.Header.EventID
+	}
+	if ev.Event.Operator != nil {
+		act.OpenID = ev.Event.Operator.OpenID
+	}
+	return act, true
 }
 
 // textOf pulls the text out of a message body, which Feishu delivers as a JSON
@@ -150,6 +185,15 @@ func (c *sdkClient) SendText(ctx context.Context, openID, text string) (string, 
 		return "", fmt.Errorf("feishu: encode a text message: %w", err)
 	}
 	return c.create(ctx, openID, msgTypeText, string(content))
+}
+
+// SendCard sends an approval card as an interactive message.
+func (c *sdkClient) SendCard(ctx context.Context, openID string, card Card) (string, error) {
+	content, err := cardJSON(card)
+	if err != nil {
+		return "", err
+	}
+	return c.create(ctx, openID, msgTypeCard, content)
 }
 
 // SendFile uploads the file and then sends the key it got back.
