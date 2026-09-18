@@ -59,10 +59,20 @@ that bot `/new kimi ~/code/demo`, send it a task, and answer any approval with
 [docs/en/quickstart.md](docs/en/quickstart.md), and the chat side is documented
 in [docs/en/wechat.md](docs/en/wechat.md).
 
+Prefer Feishu? `ferry login feishu` adds it as a second entry point next to
+WeChat, served by the same daemon — see [docs/en/feishu.md](docs/en/feishu.md).
+Working in an editor? Set Zed's (or any ACP editor's) agent command to
+`ferry proxy <agent>` and the editor session is mirrored to your chat — see
+[docs/en/proxy.md](docs/en/proxy.md).
+
 ## Documentation
 
 - [Quickstart](docs/en/quickstart.md) — install, log in, first session
 - [WeChat entry](docs/en/wechat.md) — pairing, gating, reply windows
+- [Feishu entry](docs/en/feishu.md) — the second chat platform
+- [Editor proxy](docs/en/proxy.md) — `ferry proxy` for Zed and other ACP editors
+- [Claude Code](docs/en/claude-code.md) — the optional channel plugin and compatibility mode
+- [Wrapping a terminal program](docs/en/pty.md) — `ferry run`, experimental
 - [Agents](docs/en/agents.md) — presets, drivers, workspace roots
 - [Handoff](docs/en/handoff.md) — moving a session between terminal and chat
 - [Security](docs/en/security.md) — secrets, approvals, path limits

@@ -54,10 +54,19 @@ ferry daemon
 [docs/zh-CN/quickstart.md](docs/zh-CN/quickstart.md)，
 聊天这一侧见 [docs/zh-CN/wechat.md](docs/zh-CN/wechat.md)。
 
+用飞书？`ferry login feishu` 会把它加成微信之外的第二个入口，由同一个守护进程服务，
+见 [docs/zh-CN/feishu.md](docs/zh-CN/feishu.md)。在编辑器里干活？把 Zed（或任何
+ACP 编辑器）的 agent 命令设成 `ferry proxy <agent>`，编辑器里的会话就会镜像到聊天，
+见 [docs/zh-CN/proxy.md](docs/zh-CN/proxy.md)。
+
 ## 文档
 
 - [快速上手](docs/zh-CN/quickstart.md) —— 安装、登录、第一个会话
 - [微信入口](docs/zh-CN/wechat.md) —— 配对、陌生人门控、回复窗口
+- [飞书入口](docs/zh-CN/feishu.md) —— 第二个聊天平台
+- [编辑器代理](docs/zh-CN/proxy.md) —— 给 Zed 等 ACP 编辑器用的 `ferry proxy`
+- [Claude Code](docs/zh-CN/claude-code.md) —— 可选的 channel 插件与兼容模式
+- [包装终端程序](docs/zh-CN/pty.md) —— `ferry run`，实验功能
 - [Agent](docs/zh-CN/agents.md) —— 预设、驱动、工作区根目录
 - [接力](docs/zh-CN/handoff.md) —— 会话在终端与聊天之间转移
 - [安全](docs/zh-CN/security.md) —— 凭据、审批、路径限制

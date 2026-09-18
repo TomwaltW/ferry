@@ -28,3 +28,24 @@ agent 被允许读写哪些目录，以及伸到目录之外的工具调用会�
 ## 接入新 agent
 
 怎么让 Ferry 用上一个还没有预设的 agent。P2 补充。
+
+## ACP 版本
+
+每个 agent 条目用 `acp_version` 选择 Ferry 跟它说哪一版 Agent Client Protocol：
+
+```toml
+[[agents]]
+name = "my-agent"
+command = ["my-agent", "--acp"]
+acp_version = "auto"
+```
+
+| 取值 | 行为 |
+| --- | --- |
+| `v1` | 默认值。Ferry 说 ACP v1，和以往版本一样。 |
+| `v2` | Ferry 说 ACP v2：用 `session/resume` 代替 `session/load`，一轮以空闲的状态更新结束，支持 `session/list` 与 `session/close`。握手时 agent 回 v1 则启动失败。 |
+| `auto` | 先按 v2 握手；agent 协商回 v1 时，重启它并改用 v1。 |
+
+ACP v2 仍在演进；除非 agent 的文档写明支持 v2，否则保持 `v1`。v2 agent 需要
+交互式登录时，会话不会启动，聊天里会提示你先在电脑终端里用它完成登录；
+不需要交互的登录方式由 Ferry 自动完成。

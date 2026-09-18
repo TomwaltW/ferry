@@ -10,6 +10,25 @@ driving it at once. Outline only — content arrives with P2.
 What is lost when chat and terminal each start their own session, and what a
 single shared session buys you. Lands in P2.
 
+## Three tiers
+
+How closely chat and your computer share a session depends on the agent and on
+how you run it:
+
+| Tier | How | Both sides at once |
+| --- | --- | --- |
+| 1. Takeover | `/ls` in chat lists the agent's recent terminal sessions, `/use` resumes one over ACP, `ferry back` hands it back to the terminal. | No — one side drives at a time. |
+| 2. Shared server | Agents with a server mode (`opencode serve`, `qwen serve`): the terminal and chat talk to the same running session. | Yes |
+| 3. Proxy direct | Run the agent through `ferry proxy <agent>` from an ACP editor such as Zed: the editor drives, chat watches, and with `--allow-inject` can type into it. See [proxy.md](proxy.md). | Yes |
+
+## Claude Code plugin
+
+Claude Code can be reached from chat through the optional `ferry channel`
+plugin, which relays messages and tool-use approvals into a running Claude Code
+session. It needs **Anthropic's own authentication** (a claude.ai account or a
+Console API key) and does not work on Bedrock, Vertex AI or Foundry. Setup and
+limits are in [claude-code.md](claude-code.md).
+
 ## Taking over from chat
 
 Claiming a session that was started in the terminal, what the terminal shows

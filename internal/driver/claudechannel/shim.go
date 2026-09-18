@@ -326,7 +326,14 @@ func (s *shim) onNotify(_ context.Context, method string, params json.RawMessage
 		ToolName:     p.ToolName,
 		Description:  p.Description,
 		InputPreview: p.InputPreview,
-		CreatedAt:    s.clk.Now(),
+		// Claude Code knows only allow and deny. The approval module grants a
+		// "y" by picking an allow option, so both have to be on offer; their
+		// IDs are the behaviours relayVerdict sends back.
+		Options: []fsp.ApprovalOption{
+			{ID: BehaviorAllow, Kind: fsp.OptAllowOnce, Label: "Allow"},
+			{ID: BehaviorDeny, Kind: fsp.OptRejectOnce, Label: "Deny"},
+		},
+		CreatedAt: s.clk.Now(),
 	}
 	if err := s.send(control.Message{
 		Type:      control.MsgApprovalRequest,

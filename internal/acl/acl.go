@@ -31,15 +31,32 @@ const (
 )
 
 type acl struct {
-	cfg config.WeChatConfig
+	cfg config.Config
 	st  ports.Store
 	clk clock.Clock
 }
 
 var _ ports.ACL = (*acl)(nil)
 
-func New(cfg config.WeChatConfig, st ports.Store, clk clock.Clock) ports.ACL {
+func New(cfg config.Config, st ports.Store, clk clock.Clock) ports.ACL {
 	return &acl{cfg: cfg, st: st, clk: clk}
+}
+
+// approvers is the list that governs one endpoint: [feishu] approvers for a
+// Feishu endpoint, the [wechat] list for everything else — the fake platform,
+// and the channel:<name> a third-party server appears as.
+//
+// Feishu goes through WithDefaults rather than reading the field, because
+// config.Load does not apply it: an omitted [feishu] approvers arrives here
+// nil, and taking that literally would leave nobody able to approve anything on
+// Feishu — fails closed, and says nothing about why. WithDefaults answers with
+// the ["owner"] that config documents, so the default is stated in one place
+// instead of two that can drift.
+func (a *acl) approvers(p fsp.Platform) []string {
+	if p == fsp.PlatformFeishu {
+		return a.cfg.Feishu.WithDefaults().Approvers
+	}
+	return a.cfg.WeChat.Approvers
 }
 
 // Allowed reports whether the sender has any role at the endpoint. A store
@@ -54,9 +71,10 @@ func (a *acl) Allowed(ep fsp.EndpointID, senderID string) bool {
 
 // IsApprover reports whether the sender may decide approvals: the owner when
 // the configuration lists "owner", anyone holding the approver role, and
-// anyone named in the configured approver list.
+// anyone named in the approver list of the endpoint's own platform.
 func (a *acl) IsApprover(ep fsp.EndpointID, senderID string) bool {
-	for _, who := range a.cfg.Approvers {
+	approvers := a.approvers(ep.Platform)
+	for _, who := range approvers {
 		if who != RoleOwner && who == senderID {
 			return true
 		}
@@ -69,7 +87,7 @@ func (a *acl) IsApprover(ep fsp.EndpointID, senderID string) bool {
 	case RoleApprover:
 		return true
 	case RoleOwner:
-		for _, who := range a.cfg.Approvers {
+		for _, who := range approvers {
 			if who == RoleOwner {
 				return true
 			}

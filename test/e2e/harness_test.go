@@ -21,10 +21,14 @@ import (
 	"github.com/TomwaltW/ferry/internal/clock"
 	"github.com/TomwaltW/ferry/internal/command"
 	"github.com/TomwaltW/ferry/internal/config"
+	"github.com/TomwaltW/ferry/internal/control"
 	"github.com/TomwaltW/ferry/internal/core"
 	"github.com/TomwaltW/ferry/internal/driver/acp"
 	"github.com/TomwaltW/ferry/internal/fsp"
 	"github.com/TomwaltW/ferry/internal/i18n"
+	"github.com/TomwaltW/ferry/internal/im/channelhost"
+	"github.com/TomwaltW/ferry/internal/im/feishu"
+	"github.com/TomwaltW/ferry/internal/im/feishu/feishutest"
 	"github.com/TomwaltW/ferry/internal/im/wechat"
 	"github.com/TomwaltW/ferry/internal/outbox"
 	"github.com/TomwaltW/ferry/internal/ports"
@@ -42,8 +46,11 @@ const (
 	agentName = "fake"
 )
 
-// agentBin is the fake ACP agent, built once for the whole package.
-var agentBin string
+// agentBin is the fake ACP agent, ferryBin the ferry command itself (ferry
+// proxy, ferry channel and ferry run are driven as the subprocesses they are in
+// real use), echoChannelBin the third-party channel server of B7 and tapBin
+// the wire recorder of B8. All are built once for the whole package.
+var agentBin, ferryBin, echoChannelBin, tapBin string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "ferry-e2e-bin")
@@ -60,11 +67,22 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "e2e: expected to run from the repository:", err)
 		os.Exit(1)
 	}
-	build := exec.Command("go", "build", "-o", agentBin, "./cmd/ferry-fakeagent")
-	build.Dir = "../.."
-	if out, err := build.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "e2e: building ferry-fakeagent: %v\n%s", err, out)
-		os.Exit(1)
+	suffix := strings.TrimPrefix(name, "ferry-fakeagent")
+	ferryBin = filepath.Join(dir, "ferry"+suffix)
+	echoChannelBin = filepath.Join(dir, "echo-channel"+suffix)
+	tapBin = filepath.Join(dir, "acptap"+suffix)
+	for _, b := range []struct{ out, pkg string }{
+		{agentBin, "./cmd/ferry-fakeagent"},
+		{ferryBin, "./cmd/ferry"},
+		{echoChannelBin, "./test/e2e/testdata/echo-channel"},
+		{tapBin, "./test/e2e/testdata/acptap"},
+	} {
+		build := exec.Command("go", "build", "-o", b.out, b.pkg)
+		build.Dir = "../.."
+		if out, err := build.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "e2e: building %s: %v\n%s", b.pkg, err, out)
+			os.Exit(1)
+		}
 	}
 	code := m.Run()
 	os.RemoveAll(dir)
@@ -80,16 +98,27 @@ type rig struct {
 	cfg    config.Config
 	bundle *i18n.Bundle
 
+	// fs is the fake Feishu client, set by withFeishu. It outlives restarts,
+	// as the real app would.
+	fs *feishutest.Client
+
 	ep      fsp.EndpointID
 	store   ports.Store
 	adapter *wechat.Adapter
 	aclmod  ports.ACL
+	driver  ports.Driver
 	daemon  *core.Daemon
 	cancel  context.CancelFunc
 	done    chan struct{}
+
+	// patience is how long waitFor waits; settle unless a test needs longer.
+	patience time.Duration
 }
 
-func newRig(t *testing.T) *rig {
+// rigOption adjusts the configuration before the daemon first starts.
+type rigOption func(*rig)
+
+func newRig(t *testing.T, opts ...rigOption) *rig {
 	t.Helper()
 	gw := fakeilink.New(fakeilink.Options{LongPoll: 200 * time.Millisecond})
 	t.Cleanup(gw.Close)
@@ -120,8 +149,22 @@ func newRig(t *testing.T) *rig {
 		t.Fatalf("e2e config invalid: %v", err)
 	}
 
-	r := &rig{t: t, gw: gw, home: home, ws: ws, cfg: cfg, bundle: i18n.Default()}
+	r := &rig{t: t, gw: gw, home: home, ws: ws, cfg: cfg, bundle: i18n.Default(), patience: settle}
 	r.ep = fsp.EndpointID{Platform: fsp.PlatformWeChat, BotID: gw.BotID(), PeerID: ownerID}
+	for _, o := range opts {
+		o(r)
+	}
+	if err := r.cfg.Validate(); err != nil {
+		t.Fatalf("e2e config invalid: %v", err)
+	}
+	if err := r.cfg.ValidateEntries(); err != nil {
+		t.Fatalf("e2e config entries invalid: %v", err)
+	}
+	// ferry proxy, ferry channel and ferry run read the configuration from
+	// FERRY_HOME, exactly as they do next to a real daemon.
+	if err := config.Save(config.Path(home), r.cfg); err != nil {
+		t.Fatalf("write the configuration: %v", err)
+	}
 	r.start()
 	t.Cleanup(r.stop)
 	return r
@@ -153,8 +196,30 @@ func (r *rig) start() {
 		t.Fatalf("wechat adapter: %v", err)
 	}
 	r.adapter = adapter
+	// The same entry points, in the same order, as cmd/ferry's buildIMs.
+	ims := []ports.IMAdapter{adapter}
+	if r.cfg.Feishu.Enabled {
+		fs, err := feishu.NewWithClient(feishu.Options{
+			Config: r.cfg.Feishu, Secret: "e2e-secret", Home: r.home, Clock: clock.Real(), Log: log,
+		}, r.fs)
+		if err != nil {
+			t.Fatalf("feishu adapter: %v", err)
+		}
+		ims = append(ims, fs)
+	}
+	for _, sc := range r.cfg.ChannelServers {
+		ch, err := channelhost.New(channelhost.Options{Config: sc, Home: r.home, Clock: clock.Real(), Log: log})
+		if err != nil {
+			t.Fatalf("channel server %s: %v", sc.Name, err)
+		}
+		ims = append(ims, ch)
+	}
+	byPlatform := make(map[fsp.Platform]ports.IMAdapter, len(ims))
+	for _, im := range ims {
+		byPlatform[im.Platform()] = im
+	}
 	ob := outbox.New(outbox.Options{
-		Config: r.cfg.Outbox, IM: adapter, Store: st, I18n: r.bundle,
+		Config: r.cfg.Outbox, IMs: byPlatform, Store: st, I18n: r.bundle,
 		Lang:  func(fsp.EndpointID) fsp.Lang { return r.cfg.Lang },
 		Clock: clock.Real(), Log: log,
 	})
@@ -170,10 +235,15 @@ func (r *rig) start() {
 	if err != nil {
 		t.Fatalf("registry: %v", err)
 	}
-	r.aclmod = acl.New(r.cfg.WeChat, st, clock.Real())
+	versions := make(map[string]string, len(r.cfg.Agents))
+	for _, a := range r.cfg.Agents {
+		versions[a.Name] = a.ACPVersionOrDefault()
+	}
+	r.driver = acp.NewVersioned(log, func(agent string) string { return versions[agent] })
+	r.aclmod = acl.New(r.cfg, st, clock.Real())
 	r.daemon = core.New(core.Deps{
-		Config: r.cfg, Home: r.home, IM: adapter,
-		Drivers:  map[fsp.DriverKind]ports.Driver{fsp.DriverACP: acp.New(log)},
+		Config: r.cfg, Home: r.home, IMs: ims,
+		Drivers:  map[fsp.DriverKind]ports.Driver{fsp.DriverACP: r.driver},
 		Registry: reg, Store: st, Outbox: ob, ACL: r.aclmod,
 		Approvals: ap, Commands: command.New(), I18n: r.bundle, Clock: clock.Real(), Log: log,
 	})
@@ -181,12 +251,27 @@ func (r *rig) start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
 	r.done = make(chan struct{})
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		if err := control.ServeWith(ctx, control.ServeOptions{
+			Home: r.home, Handler: r.daemon.ControlHandler(), Log: log,
+		}); err != nil {
+			t.Errorf("control.ServeWith: %v", err)
+		}
+	}()
 	go func() {
 		defer close(r.done)
 		if err := r.daemon.Run(ctx); err != nil && ctx.Err() == nil {
 			t.Errorf("daemon.Run: %v", err)
 		}
+		<-served
 	}()
+	// The subprocess commands find the daemon through control.json.
+	r.waitFor("the control endpoint", func() bool {
+		_, err := os.Stat(filepath.Join(r.home, control.SocketName))
+		return err == nil
+	})
 	// The daemon is up once it reports a status; that also means the IM loop started.
 	r.waitFor("daemon to come up", func() bool { return r.daemon.Status().BotID != "" || r.daemon.Status().UpdatedAt.IsZero() })
 }
@@ -238,7 +323,7 @@ func (r *rig) sentTo(user string) []string {
 
 func (r *rig) waitFor(what string, cond func() bool) {
 	r.t.Helper()
-	deadline := time.Now().Add(settle)
+	deadline := time.Now().Add(r.patience)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return

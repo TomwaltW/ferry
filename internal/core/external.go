@@ -262,6 +262,9 @@ func (e *externalSession) pump(ctx context.Context) {
 			}
 			ev := *m.Event
 			ev.Session = e.id
+			if e.req.Kind == control.KindProxy {
+				e.proxyEvent(ctx, &ev)
+			}
 			select {
 			case e.events <- ev:
 			case <-ctx.Done():
@@ -275,6 +278,33 @@ func (e *externalSession) pump(ctx context.Context) {
 			return
 		default:
 			e.d.log.Debug("external stream: unknown frame", "session", e.id, "type", m.Type)
+		}
+	}
+}
+
+// The two conventions ferry proxy speaks through plain events (spec-p3 3.6).
+const (
+	// editorTurnKey is the chunk the proxy mirrors when the editor starts a
+	// turn: the i18n key itself, which the daemon renders in the owner's
+	// language.
+	editorTurnKey = "proxy.editor_turn"
+	// statusAwaitingEditor marks a tool whose permission request went to the
+	// editor; chat is told it is waiting there.
+	statusAwaitingEditor = "awaiting_editor"
+)
+
+// proxyEvent applies those conventions to one mirrored event: the turn marker
+// is localised in place, and a tool waiting on the editor also sends the
+// proxy.editor_approval notice.
+func (e *externalSession) proxyEvent(ctx context.Context, ev *fsp.Event) {
+	switch {
+	case ev.Kind == fsp.EvChunk && ev.Text == editorTurnKey:
+		if rec, ok := e.d.record(ctx, e.id); ok {
+			ev.Text = e.d.t(ctx, rec.Owner, editorTurnKey, nil) + "\n"
+		}
+	case ev.Kind == fsp.EvTool && ev.Tool != nil && ev.Tool.Status == statusAwaitingEditor:
+		if rec, ok := e.d.record(ctx, e.id); ok {
+			e.d.reply(ctx, rec.Owner, "proxy.editor_approval", map[string]any{"Tool": ev.Tool.Title})
 		}
 	}
 }

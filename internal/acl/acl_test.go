@@ -28,7 +28,66 @@ func newACL(t *testing.T, cfg config.WeChatConfig) (ports.ACL, ports.Store, *clo
 	}
 	t.Cleanup(func() { st.Close() })
 	clk := clock.NewFake(base)
-	return New(cfg, st, clk), st, clk
+	return New(config.Config{WeChat: cfg}, st, clk), st, clk
+}
+
+// newFullACL builds an ACL over a whole configuration, for the approver lists
+// that differ per platform.
+func newFullACL(t *testing.T, cfg config.Config) ports.ACL {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "ferry.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	return New(cfg, st, clock.NewFake(base))
+}
+
+// Each platform decides approvals by its own list: a name trusted on Feishu is
+// not one on WeChat, and a platform no list names — a third-party channel
+// server appears as channel:<name> — keeps the WeChat list rather than falling
+// to an empty one nobody could approve through.
+func TestApproversArePerPlatform(t *testing.T) {
+	a := newFullACL(t, config.Config{
+		WeChat: config.WeChatConfig{Approvers: []string{"wxUser"}},
+		Feishu: config.FeishuConfig{Approvers: []string{"fsUser"}},
+	})
+
+	feishuEP := fsp.EndpointID{Platform: fsp.PlatformFeishu, BotID: "bot1", PeerID: "roomA"}
+	if !a.IsApprover(feishuEP, "fsUser") {
+		t.Error("IsApprover(feishu, fsUser) = false, want true from the [feishu] list")
+	}
+	if a.IsApprover(feishuEP, "wxUser") {
+		t.Error("IsApprover(feishu, wxUser) = true, want false: the [wechat] list does not carry over")
+	}
+
+	wechatEP := fsp.EndpointID{Platform: fsp.PlatformWeChat, BotID: "bot1", PeerID: "roomA"}
+	if !a.IsApprover(wechatEP, "wxUser") {
+		t.Error("IsApprover(wechat, wxUser) = false, want true from the [wechat] list")
+	}
+	if a.IsApprover(wechatEP, "fsUser") {
+		t.Error("IsApprover(wechat, fsUser) = true, want false: the [feishu] list does not carry over")
+	}
+
+	channelEP := fsp.EndpointID{Platform: fsp.Platform("channel:demo"), BotID: "demo", PeerID: "roomA"}
+	if !a.IsApprover(channelEP, "wxUser") {
+		t.Error("IsApprover(channel:demo, wxUser) = false, want the [wechat] list to still govern")
+	}
+
+	// config.Load does not apply FeishuConfig.WithDefaults, so an omitted
+	// [feishu] approvers has to resolve to the ["owner"] config documents —
+	// not to an empty list, and not to the [wechat] names either.
+	b := newFullACL(t, config.Config{WeChat: config.WeChatConfig{Approvers: []string{"wxUser"}}})
+	if err := b.SetOwner(context.Background(), fsp.PlatformFeishu, "bot1", "ownerA"); err != nil {
+		t.Fatalf("SetOwner: %v", err)
+	}
+	ownerEP := fsp.EndpointID{Platform: fsp.PlatformFeishu, BotID: "bot1", PeerID: "ownerA"}
+	if !b.IsApprover(ownerEP, "ownerA") {
+		t.Error(`IsApprover(feishu owner) = false with no [feishu] approvers, want true: it defaults to ["owner"]`)
+	}
+	if b.IsApprover(feishuEP, "wxUser") {
+		t.Error("IsApprover(feishu, wxUser) = true with no [feishu] approvers, want false: the [wechat] list does not carry over")
+	}
 }
 
 func TestOwnerIsApprover(t *testing.T) {
