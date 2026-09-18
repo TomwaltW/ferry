@@ -6,14 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/TomwaltW/ferry/internal/clock"
 	"github.com/TomwaltW/ferry/internal/fsp"
 )
 
@@ -28,6 +31,11 @@ type Client struct {
 	enc   *json.Encoder
 	dec   *bufio.Scanner
 	token string
+	clk   clock.Clock
+
+	// closed is set by Close, so that a read interrupted by our own Close
+	// reads as a clean end of stream rather than as a socket error.
+	closed atomic.Bool
 }
 
 // Dial reads <home>/control.json and connects to the daemon. A missing file or
@@ -53,12 +61,21 @@ func Dial(home string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("control: connect to the daemon: %w", fsp.ErrNotFound)
 	}
-	scanner := bufio.NewScanner(conn)
-	scanner.Buffer(make([]byte, 0, 4096), maxLine)
-	return &Client{conn: conn, enc: json.NewEncoder(conn), dec: scanner, token: ep.Token}, nil
+	return newClient(conn, ep.Token, clock.Real()), nil
 }
 
-func (c *Client) Close() error { return c.conn.Close() }
+// newClient wraps an established connection. Dial uses it; tests use it to
+// speak to a listener of their own, with a clock they drive themselves.
+func newClient(conn net.Conn, token string, clk clock.Clock) *Client {
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 0, 4096), maxLine)
+	return &Client{conn: conn, enc: json.NewEncoder(conn), dec: scanner, token: token, clk: clk}
+}
+
+func (c *Client) Close() error {
+	c.closed.Store(true)
+	return c.conn.Close()
+}
 
 func (c *Client) Park(ctx context.Context, req ParkRequest) (ParkResponse, error) {
 	args, err := json.Marshal(req)
@@ -117,4 +134,106 @@ func (c *Client) call(ctx context.Context, op string, args json.RawMessage, out 
 		return fmt.Errorf("control: parse the data of %s: %w", op, err)
 	}
 	return nil
+}
+
+// Attach registers an external session and hands back the stream that carries
+// it. It is the last call the Client makes on this connection: Park and Status
+// share the same socket, and after attach the socket belongs to the stream.
+func (c *Client) Attach(ctx context.Context, req AttachRequest) (*Stream, AttachResponse, error) {
+	args, err := json.Marshal(req)
+	if err != nil {
+		return nil, AttachResponse{}, fmt.Errorf("control: encode attach: %w", err)
+	}
+	var out AttachResponse
+	if err := c.call(ctx, OpAttach, args, &out); err != nil {
+		return nil, AttachResponse{}, err
+	}
+	s := &Stream{c: c, done: make(chan struct{})}
+	s.mark()
+	go s.keepalive()
+	return s, out, nil
+}
+
+// Stream is the client half of an attached connection. Send is safe to call
+// from any goroutine; Recv expects a single reader, which is how the external
+// processes are built: one loop reads, everything else writes.
+type Stream struct {
+	c    *Client
+	done chan struct{}
+	once sync.Once
+	// last is the clock time of the newest message, in nanoseconds, so that
+	// the keepalive can read it without taking the send lock.
+	last atomic.Int64
+}
+
+func (s *Stream) Send(m Message) error {
+	s.c.mu.Lock()
+	defer s.c.mu.Unlock()
+	if err := s.c.enc.Encode(m); err != nil {
+		return fmt.Errorf("control: send %s: %w", m.Type, err)
+	}
+	return nil
+}
+
+// Recv returns the next message meant for the caller. Ping and pong never
+// surface: a ping is answered here, and a pong only refreshes the keepalive.
+// A connection that went away — the peer's, or ours through Close — reads as
+// io.EOF.
+func (s *Stream) Recv() (Message, error) {
+	for {
+		if !s.c.dec.Scan() {
+			if err := s.c.dec.Err(); err != nil && !s.c.closed.Load() {
+				return Message{}, fmt.Errorf("control: read the stream: %w", err)
+			}
+			return Message{}, io.EOF
+		}
+		var m Message
+		if err := json.Unmarshal(s.c.dec.Bytes(), &m); err != nil {
+			return Message{}, fmt.Errorf("control: parse a stream message: %w", err)
+		}
+		s.mark()
+		switch m.Type {
+		case MsgPing:
+			if err := s.Send(Message{Type: MsgPong}); err != nil {
+				return Message{}, err
+			}
+		case MsgPong:
+		default:
+			return m, nil
+		}
+	}
+}
+
+// Close ends the stream and the connection under it. A Recv blocked on the
+// socket returns io.EOF.
+func (s *Stream) Close() error {
+	var err error
+	s.once.Do(func() {
+		close(s.done)
+		err = s.c.Close()
+	})
+	return err
+}
+
+func (s *Stream) mark() { s.last.Store(s.c.clk.Now().UnixNano()) }
+
+// keepalive sends a ping every PingInterval and closes the stream once
+// PingTimeout passed without a single message, which is the only way to notice
+// a peer that stopped answering without closing its end.
+func (s *Stream) keepalive() {
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-s.c.clk.After(PingInterval):
+			if s.c.clk.Now().Sub(time.Unix(0, s.last.Load())) >= PingTimeout {
+				_ = s.Close()
+				return
+			}
+			if err := s.Send(Message{Type: MsgPing}); err != nil {
+				_ = s.Close()
+				return
+			}
+		}
+	}
 }

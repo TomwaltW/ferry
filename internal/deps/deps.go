@@ -4,11 +4,16 @@
 package deps
 
 import (
+	_ "github.com/aymanbagabas/go-pty"
 	_ "github.com/coder/acp-go-sdk"
+	_ "github.com/larksuite/oapi-sdk-go/v3"
+	_ "github.com/larksuite/oapi-sdk-go/v3/ws"
 	_ "github.com/mdp/qrterminal/v3"
+	_ "github.com/modelcontextprotocol/go-sdk/mcp"
 	_ "github.com/nicksnyder/go-i18n/v2/i18n"
 	_ "github.com/pelletier/go-toml/v2"
 	_ "github.com/spf13/cobra"
 	_ "github.com/zalando/go-keyring"
+	_ "golang.org/x/term"
 	_ "modernc.org/sqlite"
 )

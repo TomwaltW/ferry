@@ -306,7 +306,11 @@ func (b *box) sendOnce(ctx context.Context, msg fsp.Outbound, replyCtx string) (
 		sendCtx, cancel = context.WithTimeout(ctx, d)
 		defer cancel()
 	}
-	state, err := b.im.Send(sendCtx, msg, replyCtx)
+	im, err := b.adapter(msg.Endpoint)
+	if err != nil {
+		return fsp.DeliveryRejected, err
+	}
+	state, err := im.Send(sendCtx, msg, replyCtx)
 	if err == nil {
 		return state, nil
 	}

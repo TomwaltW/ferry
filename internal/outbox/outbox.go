@@ -40,12 +40,16 @@ const (
 
 type Options struct {
 	Config config.OutboxConfig
-	IM     ports.IMAdapter
-	Store  ports.Store
-	I18n   ports.I18n
-	Lang   func(fsp.EndpointID) fsp.Lang
-	Clock  clock.Clock
-	Log    *slog.Logger
+	// IMs holds one adapter per platform; a message goes to the one that owns
+	// msg.Endpoint.Platform (spec-p3 3.1). IM is the single-adapter form of P1
+	// and P2, folded into IMs by New.
+	IMs   map[fsp.Platform]ports.IMAdapter
+	IM    ports.IMAdapter
+	Store ports.Store
+	I18n  ports.I18n
+	Lang  func(fsp.EndpointID) fsp.Lang
+	Clock clock.Clock
+	Log   *slog.Logger
 	// Waker raises an out-of-band reminder when an urgent message cannot be
 	// delivered. Optional: without one, a held message simply waits.
 	Waker ports.Waker
@@ -59,7 +63,7 @@ type Options struct {
 // shut.
 type box struct {
 	cfg   config.OutboxConfig
-	im    ports.IMAdapter
+	ims   map[fsp.Platform]ports.IMAdapter
 	store ports.Store
 	i18n  ports.I18n
 	lang  func(fsp.EndpointID) fsp.Lang
@@ -78,10 +82,33 @@ type box struct {
 	seq atomic.Int64
 }
 
+// normalizeAdapters is the one place that reconciles the two shapes Options
+// accepts: IMs when the caller has them, the P1 single IM otherwise.
+func normalizeAdapters(opts Options) map[fsp.Platform]ports.IMAdapter {
+	if len(opts.IMs) > 0 {
+		return opts.IMs
+	}
+	if opts.IM != nil {
+		return map[fsp.Platform]ports.IMAdapter{opts.IM.Platform(): opts.IM}
+	}
+	return nil
+}
+
+// adapter is the entry point a message leaves through. A platform nobody
+// serves has no adapter, which the send loop reports as fsp.ErrNotFound rather
+// than dropping the message without a trace.
+func (b *box) adapter(ep fsp.EndpointID) (ports.IMAdapter, error) {
+	im, ok := b.ims[ep.Platform]
+	if !ok {
+		return nil, fmt.Errorf("outbox: no entry point for platform %q: %w", ep.Platform, fsp.ErrNotFound)
+	}
+	return im, nil
+}
+
 func New(opts Options) ports.Outbox {
 	b := &box{
 		cfg:   opts.Config,
-		im:    opts.IM,
+		ims:   normalizeAdapters(opts),
 		store: opts.Store,
 		i18n:  opts.I18n,
 		lang:  opts.Lang,

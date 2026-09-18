@@ -279,6 +279,8 @@ func (f *fakeIM) Run(ctx context.Context, _ chan<- fsp.Inbound) error {
 
 func (f *fakeIM) Typing(context.Context, fsp.EndpointID, string, bool) error { return nil }
 
+func (f *fakeIM) Limits() ports.DeliveryLimits { return ports.DeliveryLimits{NeedsWindow: true} }
+
 func (f *fakeIM) Status() ports.AdapterStatus {
 	return ports.AdapterStatus{Online: true, BotID: "bot", OwnerID: "owner"}
 }

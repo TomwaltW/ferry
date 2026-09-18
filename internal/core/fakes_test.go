@@ -78,6 +78,8 @@ func (f *fakeIM) Typing(ctx context.Context, ep fsp.EndpointID, replyCtx string,
 	return nil
 }
 
+func (f *fakeIM) Limits() ports.DeliveryLimits { return ports.DeliveryLimits{NeedsWindow: true} }
+
 func (f *fakeIM) Status() ports.AdapterStatus {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -17,8 +17,12 @@ import (
 )
 
 type Deps struct {
-	Config    config.Config
-	Home      string
+	Config config.Config
+	Home   string
+	// IMs are the entry points the daemon serves, one adapter per platform
+	// (spec-p3 3.1). IM is the single-adapter form of P1 and P2; New folds it
+	// into IMs, and it goes away once every caller fills IMs instead.
+	IMs       []ports.IMAdapter
 	IM        ports.IMAdapter
 	Drivers   map[fsp.DriverKind]ports.Driver
 	Registry  ports.Registry
@@ -32,6 +36,18 @@ type Deps struct {
 	I18n      ports.I18n
 	Clock     clock.Clock
 	Log       *slog.Logger
+}
+
+// normalizeAdapters is the one place that reconciles the two shapes Deps
+// accepts: IMs when the caller has them, the P1 single IM otherwise.
+func normalizeAdapters(d Deps) []ports.IMAdapter {
+	if len(d.IMs) > 0 {
+		return d.IMs
+	}
+	if d.IM != nil {
+		return []ports.IMAdapter{d.IM}
+	}
+	return nil
 }
 
 type Status struct {
@@ -69,6 +85,12 @@ func New(d Deps) *Daemon {
 	log := d.Log
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
+	}
+	d.IMs = normalizeAdapters(d)
+	if len(d.IMs) > 0 {
+		// Until the multi-entry routing of P3-T1 lands, the single-adapter
+		// paths below read the first entry point, which is the owner's.
+		d.IM = d.IMs[0]
 	}
 	dm := &Daemon{
 		deps:      d,
