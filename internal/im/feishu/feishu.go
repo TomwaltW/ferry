@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/TomwaltW/ferry/internal/clock"
@@ -38,9 +39,13 @@ var ErrRateLimited = errors.New("feishu: rate limited")
 // a fake without a network.
 type Client interface {
 	// Start opens the long-lived connection and blocks until ctx ends,
-	// handing every inbound message to onMessage.
-	Start(ctx context.Context, onMessage func(Message)) error
+	// handing every inbound message to onMessage and every card button click
+	// to onCardAction. onCardAction answers with the toast to show the
+	// clicker, or false to leave the callback unanswered.
+	Start(ctx context.Context, onMessage func(Message), onCardAction func(CardAction) (toast string, ok bool)) error
 	SendText(ctx context.Context, openID, text string) (messageID string, err error)
+	// SendCard sends an interactive card (spec-p4-b1 3.6).
+	SendCard(ctx context.Context, openID string, card Card) (messageID string, err error)
 	SendFile(ctx context.Context, openID, path string) (messageID string, err error)
 	// Ping checks the credentials; ferry login feishu uses it.
 	Ping(ctx context.Context) error
@@ -68,6 +73,10 @@ type Options struct {
 	Home   string
 	Clock  clock.Clock
 	Log    *slog.Logger
+	// I18n writes the approval cards. Without it approvals go out as text.
+	I18n ports.I18n
+	// Lang is the bot language of an endpoint; nil means zh-CN.
+	Lang func(fsp.EndpointID) fsp.Lang
 }
 
 // Adapter is the Feishu entry point. The SDK is reached only through Client,
@@ -77,6 +86,10 @@ type Adapter struct {
 	clk    clock.Clock
 	log    *slog.Logger
 	client Client
+	i18n   ports.I18n
+	lang   func(fsp.EndpointID) fsp.Lang
+	// clicks numbers card clicks that came without an event ID or a token.
+	clicks atomic.Uint64
 
 	mu     sync.Mutex
 	online bool
@@ -117,7 +130,7 @@ func NewWithClient(opts Options, c Client) (*Adapter, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Adapter{cfg: cfg, clk: clk, log: log, client: c}, nil
+	return &Adapter{cfg: cfg, clk: clk, log: log, client: c, i18n: opts.I18n, lang: opts.Lang}, nil
 }
 
 func (a *Adapter) Platform() fsp.Platform { return fsp.PlatformFeishu }
@@ -135,7 +148,9 @@ func (a *Adapter) Limits() ports.DeliveryLimits {
 // what makes the core mark the entry point offline and wake the owner.
 func (a *Adapter) Run(ctx context.Context, out chan<- fsp.Inbound) error {
 	a.markConnecting()
-	err := a.client.Start(ctx, func(m Message) { a.deliver(ctx, out, m) })
+	err := a.client.Start(ctx,
+		func(m Message) { a.deliver(ctx, out, m) },
+		func(act CardAction) (string, bool) { return a.cardAction(ctx, out, act) })
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -193,36 +208,59 @@ func (a *Adapter) deliver(ctx context.Context, out chan<- fsp.Inbound, m Message
 
 // Send delivers one message. Feishu needs no reply window: the open ID in the
 // endpoint is address enough, and replyCtx is only the message this answers.
+// A message whose dedupe key names an approval goes out as a card with
+// buttons; if Feishu turns the card down, the same message goes out as text,
+// where the typed verdict still works.
 func (a *Adapter) Send(ctx context.Context, msg fsp.Outbound, replyCtx string) (fsp.DeliveryState, error) {
 	openID := msg.Endpoint.PeerID
 	if openID == "" {
 		return fsp.DeliveryRejected, fmt.Errorf("feishu: no open id in %s: %w", msg.Endpoint, fsp.ErrNotFound)
 	}
 
-	var err error
-	for try := 0; ; try++ {
-		var id string
-		if msg.Kind == fsp.OutFile {
-			id, err = a.client.SendFile(ctx, openID, msg.FilePath)
-		} else {
-			id, err = a.client.SendText(ctx, openID, msg.Text)
-		}
+	if card, ok := a.approvalCard(msg); ok {
+		err := a.sendWithRetry(ctx, "card", func() (string, error) { return a.client.SendCard(ctx, openID, card) })
 		if err == nil {
-			a.log.Debug("feishu: sent", "kind", string(msg.Kind), "message", id)
 			return fsp.DeliveryAccepted, nil
 		}
+		if ctx.Err() != nil {
+			return fsp.DeliveryUnknown, ctx.Err()
+		}
+		a.log.Warn("feishu: the approval card was not sent; sending it as text", "err", err)
+	}
+
+	send := func() (string, error) { return a.client.SendText(ctx, openID, msg.Text) }
+	if msg.Kind == fsp.OutFile {
+		send = func() (string, error) { return a.client.SendFile(ctx, openID, msg.FilePath) }
+	}
+	if err := a.sendWithRetry(ctx, string(msg.Kind), send); err != nil {
+		if ctx.Err() != nil {
+			return fsp.DeliveryUnknown, ctx.Err()
+		}
+		// Nothing got through, but the outcome is not a refusal either: the
+		// outbox retries the same dedupe key rather than dropping the message.
+		return fsp.DeliveryUnknown, fmt.Errorf("feishu: send: %w", err)
+	}
+	return fsp.DeliveryAccepted, nil
+}
+
+// sendWithRetry makes one send, retrying it after rateLimitBackoff while
+// Feishu keeps refusing it for going too fast.
+func (a *Adapter) sendWithRetry(ctx context.Context, kind string, send func() (string, error)) error {
+	for try := 0; ; try++ {
+		id, err := send()
+		if err == nil {
+			a.log.Debug("feishu: sent", "kind", kind, "message", id)
+			return nil
+		}
 		if !errors.Is(err, ErrRateLimited) || try >= len(rateLimitBackoff) {
-			break
+			return err
 		}
 		select {
 		case <-a.clk.After(rateLimitBackoff[try]):
 		case <-ctx.Done():
-			return fsp.DeliveryUnknown, ctx.Err()
+			return ctx.Err()
 		}
 	}
-	// Nothing got through, but the outcome is not a refusal either: the outbox
-	// retries the same dedupe key rather than dropping the message.
-	return fsp.DeliveryUnknown, fmt.Errorf("feishu: send: %w", err)
 }
 
 // Typing: Feishu has no typing indicator, so this is a no-op for good.
