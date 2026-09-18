@@ -15,8 +15,12 @@ import (
 )
 
 type Options struct {
-	Policy      config.PolicyConfig
-	Roots       []string // normalised workspace roots
+	Policy config.PolicyConfig
+	Roots  []string // normalised workspace roots
+	// Workspaces gives each session the roots of its owner (spec-p4-b1 3.4),
+	// which outside_workspace is judged against. Nil keeps Roots for every
+	// session, as in P1–P3.
+	Workspaces  ports.Workspaces
 	DefaultLang fsp.Lang
 	Store       ports.Store
 	Outbox      ports.Outbox
@@ -46,6 +50,7 @@ type manager struct {
 	rules         []rule
 	defaultAction string
 	roots         []string
+	workspaces    ports.Workspaces
 	lang          fsp.Lang
 	store         ports.Store
 	outbox        ports.Outbox
@@ -106,6 +111,7 @@ func New(opts Options) ports.Approvals {
 		rules:         rules,
 		defaultAction: action,
 		roots:         normalizeRoots(opts.Roots),
+		workspaces:    opts.Workspaces,
 		lang:          opts.DefaultLang,
 		store:         opts.Store,
 		outbox:        opts.Outbox,
@@ -125,7 +131,7 @@ func (m *manager) Ask(ctx context.Context, req fsp.ApprovalRequest) (fsp.Verdict
 		req.CreatedAt = m.clk.Now()
 	}
 
-	switch m.evaluate(req) {
+	switch m.evaluate(ctx, req) {
 	case actionAllow:
 		if id, kind, ok := firstOption(req.Options, fsp.OptAllowOnce, fsp.OptAllowAlways); ok {
 			decision := fsp.DecisionAllowOnce
@@ -171,7 +177,19 @@ func (m *manager) askOwner(ctx context.Context, req fsp.ApprovalRequest) (fsp.Ve
 	m.mu.Unlock()
 
 	m.record(ctx, req)
-	m.enqueue(ctx, owner, req.Session, fsp.OutApproval, m.requestText(req))
+	// The key is the one part of the message that reaches the adapter as it
+	// was sent, so it carries the approval to entry points with buttons
+	// (spec-p4-b1 3.6).
+	_, _, always := firstOption(req.Options, fsp.OptAllowAlways)
+	key := ports.ApprovalDedupeKey(ports.ApprovalRef{ID: req.ID, AllowAlways: always}, req.CreatedAt)
+	m.send(ctx, fsp.Outbound{
+		Endpoint:  owner,
+		Session:   req.Session,
+		Kind:      fsp.OutApproval,
+		Text:      m.requestText(req),
+		Urgent:    true,
+		DedupeKey: key,
+	})
 
 	timeout := m.clk.After(m.timeout)
 	select {
@@ -276,12 +294,15 @@ func (m *manager) reply(ctx context.Context, p *pendingApproval, key string, arg
 }
 
 func (m *manager) enqueue(ctx context.Context, ep fsp.EndpointID, session fsp.SessionID, kind fsp.OutKind, text string) {
+	m.send(ctx, fsp.Outbound{Endpoint: ep, Session: session, Kind: kind, Text: text, Urgent: true})
+}
+
+func (m *manager) send(ctx context.Context, msg fsp.Outbound) {
 	if m.outbox == nil {
 		return
 	}
-	msg := fsp.Outbound{Endpoint: ep, Session: session, Kind: kind, Text: text, Urgent: true}
 	if err := m.outbox.Enqueue(ctx, msg); err != nil {
-		m.log.Error("approval: enqueue", "endpoint", ep, "error", err)
+		m.log.Error("approval: enqueue", "endpoint", msg.Endpoint, "error", err)
 	}
 }
 

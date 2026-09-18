@@ -32,10 +32,13 @@ type Deps struct {
 	Approvals ports.Approvals
 	Handoff   ports.Handoff
 	Waker     ports.Waker
-	Commands  ports.Commands
-	I18n      ports.I18n
-	Clock     clock.Clock
-	Log       *slog.Logger
+	// Workspaces gives each user roots of their own (spec-p4-b1 3.4). Nil
+	// keeps the P1–P3 behaviour: every paired user shares workspace.roots.
+	Workspaces ports.Workspaces
+	Commands   ports.Commands
+	I18n       ports.I18n
+	Clock      clock.Clock
+	Log        *slog.Logger
 }
 
 // normalizeAdapters is the one place that reconciles the two shapes Deps
@@ -487,17 +490,46 @@ func normalizePath(p string) (string, error) {
 	return filepath.EvalSymlinks(abs)
 }
 
-// resolveWorkspace normalizes dir and requires the result to be a workspace
-// root or below one.
-func (d *Daemon) resolveWorkspace(dir string) (string, bool) {
+// resolveWorkspace normalizes dir and requires the result to be one of roots
+// or below one.
+func resolveWorkspace(dir string, roots []string) (string, bool) {
 	norm, err := normalizePath(dir)
 	if err != nil {
 		return "", false
 	}
-	for _, root := range d.roots {
+	return norm, within(norm, roots)
+}
+
+// within reports whether an already normalized path is one of roots or below
+// one.
+func within(norm string, roots []string) bool {
+	for _, root := range roots {
 		if norm == root || strings.HasPrefix(norm, root+string(filepath.Separator)) {
-			return norm, true
+			return true
 		}
 	}
-	return "", false
+	return false
+}
+
+// rootsOf is where the sender may work: what Workspaces says, or the shared
+// workspace roots when there is no Workspaces.
+func (d *Daemon) rootsOf(ctx context.Context, ep fsp.EndpointID, senderID string) ([]string, error) {
+	if d.deps.Workspaces == nil {
+		return d.roots, nil
+	}
+	return d.deps.Workspaces.Roots(ctx, ep, senderID)
+}
+
+// isOwner reports whether the sender owns the bot behind ep. The owner is
+// recognised on every endpoint of their bot (spec-p4-b1 3.3), which is where
+// SetOwner recorded the role: the sender's own endpoint. The role at ep itself
+// still counts.
+func (d *Daemon) isOwner(ctx context.Context, ep fsp.EndpointID, senderID string) (bool, error) {
+	own := fsp.EndpointID{Platform: ep.Platform, BotID: ep.BotID, PeerID: senderID}
+	role, err := d.deps.Store.Role(ctx, own, senderID)
+	if err != nil || role == "owner" || own == ep {
+		return role == "owner", err
+	}
+	role, err = d.deps.Store.Role(ctx, ep, senderID)
+	return role == "owner", err
 }

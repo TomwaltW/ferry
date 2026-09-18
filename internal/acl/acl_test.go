@@ -45,8 +45,8 @@ func newFullACL(t *testing.T, cfg config.Config) ports.ACL {
 
 // Each platform decides approvals by its own list: a name trusted on Feishu is
 // not one on WeChat, and a platform no list names — a third-party channel
-// server appears as channel:<name> — keeps the WeChat list rather than falling
-// to an empty one nobody could approve through.
+// server nobody configured appears as channel-<name> — gets ["owner"] rather
+// than borrowing the WeChat list (spec-p4-b1 3.3).
 func TestApproversArePerPlatform(t *testing.T) {
 	a := newFullACL(t, config.Config{
 		WeChat: config.WeChatConfig{Approvers: []string{"wxUser"}},
@@ -69,9 +69,9 @@ func TestApproversArePerPlatform(t *testing.T) {
 		t.Error("IsApprover(wechat, fsUser) = true, want false: the [feishu] list does not carry over")
 	}
 
-	channelEP := fsp.EndpointID{Platform: fsp.Platform("channel:demo"), BotID: "demo", PeerID: "roomA"}
-	if !a.IsApprover(channelEP, "wxUser") {
-		t.Error("IsApprover(channel:demo, wxUser) = false, want the [wechat] list to still govern")
+	channelEP := fsp.EndpointID{Platform: fsp.Platform("channel-demo"), BotID: "demo", PeerID: "roomA"}
+	if a.IsApprover(channelEP, "wxUser") {
+		t.Error("IsApprover(channel-demo, wxUser) = true, want false: the [wechat] list does not carry over")
 	}
 
 	// config.Load does not apply FeishuConfig.WithDefaults, so an omitted
@@ -114,8 +114,9 @@ func TestOwnerIsApprover(t *testing.T) {
 		t.Error("a sender with no role is allowed or an approver, want neither")
 	}
 
-	// Without "owner" in the list the owner role alone does not approve.
-	b, _, _ := newACL(t, config.WeChatConfig{})
+	// Without "owner" in the list the owner role alone does not approve. The
+	// list has to name somebody else: left out, it means ["owner"].
+	b, _, _ := newACL(t, config.WeChatConfig{Approvers: []string{"someoneElse"}})
 	if err := b.SetOwner(ctx, fsp.PlatformWeChat, "bot1", "userA"); err != nil {
 		t.Fatalf("SetOwner: %v", err)
 	}

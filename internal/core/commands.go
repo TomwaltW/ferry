@@ -3,10 +3,13 @@ package core
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/TomwaltW/ferry/internal/config"
 	"github.com/TomwaltW/ferry/internal/fsp"
 	"github.com/TomwaltW/ferry/internal/ids"
 	"github.com/TomwaltW/ferry/internal/ports"
@@ -19,11 +22,11 @@ func (d *Daemon) runCommand(ctx context.Context, in fsp.Inbound, cmd ports.Comma
 	ep := in.Endpoint
 	switch cmd.Name {
 	case "ls":
-		d.cmdLs(ctx, ep)
+		d.cmdLs(ctx, ep, in.SenderID)
 	case "new":
-		d.cmdNew(ctx, ep, cmd.Args)
+		d.cmdNew(ctx, ep, in.SenderID, cmd.Args)
 	case "use":
-		d.cmdUse(ctx, ep, cmd.Args)
+		d.cmdUse(ctx, ep, in.SenderID, cmd.Args)
 	case "agents":
 		d.cmdAgents(ctx, ep)
 	case "stop":
@@ -140,20 +143,31 @@ func (d *Daemon) startSession(ctx context.Context, ep fsp.EndpointID, agent, cwd
 	return s, nil
 }
 
-func (d *Daemon) cmdNew(ctx context.Context, ep fsp.EndpointID, args []string) {
+// cmdNew starts a session in a directory the sender may work in: the one
+// given, or else the first of the sender's roots.
+func (d *Daemon) cmdNew(ctx context.Context, ep fsp.EndpointID, sender string, args []string) {
 	if len(args) == 0 {
 		d.reply(ctx, ep, "usage.new", nil)
 		return
 	}
 	agent := args[0]
 	dir := ""
-	switch {
-	case len(args) > 1:
+	if len(args) > 1 {
 		dir = strings.Join(args[1:], " ")
-	case len(d.roots) != 0:
-		dir = d.roots[0]
 	}
-	cwd, ok := d.resolveWorkspace(dir)
+	roots, err := d.rootsOf(ctx, ep, sender)
+	if err != nil {
+		d.log.Error("workspace roots", "endpoint", ep.String(), "error", err)
+		if dir == "" {
+			dir = d.userDir(ep, sender)
+		}
+		d.reply(ctx, ep, "workspace.denied", map[string]any{"Dir": dir})
+		return
+	}
+	if dir == "" && len(roots) != 0 {
+		dir = roots[0]
+	}
+	cwd, ok := resolveWorkspace(dir, roots)
 	if !ok {
 		d.reply(ctx, ep, "workspace.denied", map[string]any{"Dir": dir})
 		return
@@ -172,7 +186,7 @@ func (d *Daemon) cmdNew(ctx context.Context, ep fsp.EndpointID, args []string) {
 	}
 }
 
-func (d *Daemon) cmdUse(ctx context.Context, ep fsp.EndpointID, args []string) {
+func (d *Daemon) cmdUse(ctx context.Context, ep fsp.EndpointID, sender string, args []string) {
 	if len(args) == 0 {
 		d.reply(ctx, ep, "usage.use", nil)
 		return
@@ -193,6 +207,12 @@ func (d *Daemon) cmdUse(ctx context.Context, ep fsp.EndpointID, args []string) {
 		// Numbers past the bound sessions belong to the terminal entries the
 		// last /ls printed.
 		if ts, ok := d.terminalBySlot(ep, n); ok {
+			// The numbers belong to the endpoint, and whoever listed them may
+			// work elsewhere than whoever uses them.
+			if !d.terminalAllowed(ctx, ep, sender, ts) {
+				d.reply(ctx, ep, "workspace.denied", map[string]any{"Dir": ts.Cwd})
+				return
+			}
 			d.adoptTerminal(ctx, ep, ts, n, force)
 			return
 		}
@@ -324,13 +344,13 @@ func (d *Daemon) cmdClose(ctx context.Context, ep fsp.EndpointID, args []string)
 // cmdLs lists the sessions Ferry owns first, numbered by their slot, and then
 // the terminal sessions it could take over, numbered on from there. Those
 // numbers are remembered for a minute, so a /use right after can use them.
-func (d *Daemon) cmdLs(ctx context.Context, ep fsp.EndpointID) {
+func (d *Daemon) cmdLs(ctx context.Context, ep fsp.EndpointID, sender string) {
 	bindings, err := d.deps.Store.Bindings(ctx, ep)
 	if err != nil {
 		d.log.Error("bindings", "endpoint", ep.String(), "error", err)
 		return
 	}
-	terminals := d.terminalSessions(ctx, ep)
+	terminals := d.terminalSessions(ctx, ep, sender)
 	if len(bindings) == 0 && len(terminals) == 0 {
 		d.reply(ctx, ep, "hint.no_session", nil)
 		return
@@ -506,5 +526,37 @@ func (d *Daemon) cmdPair(ctx context.Context, in fsp.Inbound, args []string) {
 		return
 	}
 	d.reply(ctx, ep, "pair.confirmed_owner", map[string]any{"Sender": senderID})
+	if dir, ok := d.ownWorkspace(ctx, peer, senderID); ok {
+		d.reply(ctx, peer, "pair.confirmed_workspace", map[string]any{"Dir": dir})
+		return
+	}
 	d.reply(ctx, peer, "pair.confirmed", nil)
+}
+
+// ownWorkspace is the directory a newly paired user works in, when they got
+// one of their own rather than the shared roots: a [[workspace.users]] entry,
+// or one under workspace.users_root (spec-p4-b1 3.4).
+func (d *Daemon) ownWorkspace(ctx context.Context, ep fsp.EndpointID, senderID string) (string, bool) {
+	if d.deps.Workspaces == nil {
+		return "", false
+	}
+	roots, err := d.deps.Workspaces.Roots(ctx, ep, senderID)
+	if err != nil {
+		d.log.Error("workspace roots", "endpoint", ep.String(), "error", err)
+		return "", false
+	}
+	if len(roots) == 0 || slices.Equal(roots, d.roots) {
+		return "", false
+	}
+	return roots[0], true
+}
+
+// userDir is the directory workspace.users_root would give the sender, which
+// is what a refusal names when that directory could not be had. Without
+// users_root there is nothing to name.
+func (d *Daemon) userDir(ep fsp.EndpointID, senderID string) string {
+	if d.deps.Config.Workspace.UsersRoot == "" {
+		return ""
+	}
+	return filepath.Join(d.deps.Config.Workspace.UsersRoot, config.UserDirName(ep.Platform, senderID))
 }

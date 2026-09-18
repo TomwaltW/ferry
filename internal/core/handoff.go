@@ -22,10 +22,11 @@ type terminalList struct {
 	items map[int]ports.TerminalSession
 }
 
-// terminalSessions asks the handoff module what the terminals are holding. A
-// module that is not wired up, or that fails, simply contributes nothing: /ls
-// still has to list the sessions Ferry owns.
-func (d *Daemon) terminalSessions(ctx context.Context, ep fsp.EndpointID) []ports.TerminalSession {
+// terminalSessions asks the handoff module what the terminals are holding, and
+// keeps the ones the sender may work in. A module that is not wired up, or
+// that fails, simply contributes nothing: /ls still has to list the sessions
+// Ferry owns.
+func (d *Daemon) terminalSessions(ctx context.Context, ep fsp.EndpointID, sender string) []ports.TerminalSession {
 	if d.deps.Handoff == nil {
 		return nil
 	}
@@ -36,7 +37,48 @@ func (d *Daemon) terminalSessions(ctx context.Context, ep fsp.EndpointID) []port
 		}
 		return nil
 	}
-	return found
+	// Discover already keeps to the shared roots; only per-user roots can
+	// narrow the list further.
+	if d.deps.Workspaces == nil {
+		return found
+	}
+	roots, err := d.deps.Workspaces.Roots(ctx, ep, sender)
+	if err != nil {
+		d.log.Error("workspace roots", "endpoint", ep.String(), "error", err)
+		return nil
+	}
+	// A new slice: the handoff module may hand out the one it caches.
+	var kept []ports.TerminalSession
+	for _, ts := range found {
+		if terminalWithin(ts, roots) {
+			kept = append(kept, ts)
+		}
+	}
+	return kept
+}
+
+// terminalAllowed reports whether the sender may take over a terminal session:
+// its directory has to be one they may work in (spec-p4-b1 3.4).
+func (d *Daemon) terminalAllowed(ctx context.Context, ep fsp.EndpointID, sender string, ts ports.TerminalSession) bool {
+	if d.deps.Workspaces == nil {
+		return true
+	}
+	roots, err := d.deps.Workspaces.Roots(ctx, ep, sender)
+	if err != nil {
+		d.log.Error("workspace roots", "endpoint", ep.String(), "error", err)
+		return false
+	}
+	return terminalWithin(ts, roots)
+}
+
+// terminalWithin compares the directory of a terminal session with roots in the
+// form the roots are in; a directory that no longer resolves counts as outside.
+func terminalWithin(ts ports.TerminalSession, roots []string) bool {
+	norm, err := normalizePath(ts.Cwd)
+	if err != nil {
+		return false
+	}
+	return within(norm, roots)
 }
 
 // rememberTerminals records the numbers /ls printed so a later /use can resolve

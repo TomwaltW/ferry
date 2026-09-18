@@ -230,7 +230,7 @@ func TestPolicyDefaults(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := h.m.evaluate(tt.req); got != tt.want {
+			if got := h.m.evaluate(context.Background(), tt.req); got != tt.want {
 				t.Errorf("evaluate = %q, want %q", got, tt.want)
 			}
 		})
@@ -323,7 +323,7 @@ func TestPolicyCustomRules(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := h.m.evaluate(tt.req); got != tt.want {
+			if got := h.m.evaluate(context.Background(), tt.req); got != tt.want {
 				t.Errorf("evaluate = %q, want %q", got, tt.want)
 			}
 		})
@@ -334,7 +334,7 @@ func TestPolicyCustomRules(t *testing.T) {
 		Default: actionDeny,
 		Rules:   []config.PolicyRule{{Kind: []string{"read"}, Action: actionAllow}},
 	})
-	if got := bare.m.evaluate(request("execute")); got != actionDeny {
+	if got := bare.m.evaluate(context.Background(), request("execute")); got != actionDeny {
 		t.Errorf("evaluate with nothing matching = %q, want %q", got, actionDeny)
 	}
 
@@ -343,10 +343,10 @@ func TestPolicyCustomRules(t *testing.T) {
 	broken := newHarness(t, config.PolicyConfig{
 		Rules: []config.PolicyRule{{CommandPattern: `([`, Action: actionAllow}},
 	})
-	if got := broken.m.evaluate(request("execute")); got != actionAsk {
+	if got := broken.m.evaluate(context.Background(), request("execute")); got != actionAsk {
 		t.Errorf("evaluate with a broken rule = %q, want %q", got, actionAsk)
 	}
-	if got := broken.m.evaluate(request("read")); got != actionAllow {
+	if got := broken.m.evaluate(context.Background(), request("read")); got != actionAllow {
 		t.Errorf("evaluate with a broken rule = %q, want the built-in rules back", got)
 	}
 }
@@ -364,10 +364,10 @@ func TestSymlinkOutside(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	if h.m.inside(link) {
+	if inside(link, h.m.roots) {
 		t.Error("a symlink out of the workspace counts as inside, want outside")
 	}
-	if got := h.m.evaluate(request("delete", link)); got != actionDeny {
+	if got := h.m.evaluate(context.Background(), request("delete", link)); got != actionDeny {
 		t.Errorf("evaluate(delete through the symlink) = %q, want %q", got, actionDeny)
 	}
 
@@ -376,7 +376,7 @@ func TestSymlinkOutside(t *testing.T) {
 	if err := os.Symlink(elsewhere, linkDir); err != nil {
 		t.Fatalf("symlink dir: %v", err)
 	}
-	if h.m.inside(filepath.Join(linkDir, "secret.txt")) {
+	if inside(filepath.Join(linkDir, "secret.txt"), h.m.roots) {
 		t.Error("a path through a directory symlink counts as inside, want outside")
 	}
 
@@ -385,12 +385,12 @@ func TestSymlinkOutside(t *testing.T) {
 	if err := os.WriteFile(real, []byte("x"), 0o600); err != nil {
 		t.Fatalf("write %s: %v", real, err)
 	}
-	if !h.m.inside(real) {
+	if !inside(real, h.m.roots) {
 		t.Error("a real file in the workspace counts as outside, want inside")
 	}
 
 	// A path that cannot be resolved at all counts as outside.
-	if h.m.inside(filepath.Join(h.root, "does-not-exist.txt")) {
+	if inside(filepath.Join(h.root, "does-not-exist.txt"), h.m.roots) {
 		t.Error("an unresolvable path counts as inside, want outside")
 	}
 }
