@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -81,7 +82,13 @@ func TestLongOutputToFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
+	// Windows has no POSIX permission bits: os.Chmod there only toggles the
+	// read-only attribute, so Perm() reports 0666 however the file was created.
+	// Ferry therefore does NOT restrict this file on Windows beyond whatever the
+	// containing directory's ACL already gives it. That is a real gap, not a
+	// test artefact — hardening it needs Windows ACLs, which is a contract
+	// decision for P4, not something to assert away here.
+	if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Errorf("file mode = %o, want 600", perm)
 	}
 

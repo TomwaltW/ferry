@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -121,8 +122,18 @@ func TestInboundImageDownloaded(t *testing.T) {
 	if att.MIMEType != "image/jpeg" {
 		t.Errorf("MIMEType = %q, want image/jpeg", att.MIMEType)
 	}
-	if info, err := os.Stat(att.Path); err != nil || info.Mode().Perm() != 0o600 {
-		t.Errorf("mode = %v (err %v), want 0600: the file may hold private data", info.Mode().Perm(), err)
+	// Windows has no POSIX permission bits: os.Chmod there only toggles the
+	// read-only attribute, so Perm() reports 0666 however the file was created.
+	// Ferry therefore does NOT restrict this file on Windows beyond whatever the
+	// containing directory's ACL already gives it. That is a real gap, not a
+	// test artefact — hardening it needs Windows ACLs, which is a contract
+	// decision for P4, not something to assert away here.
+	info, err := os.Stat(att.Path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600: the file may hold private data", info.Mode().Perm())
 	}
 }
 

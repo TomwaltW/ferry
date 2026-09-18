@@ -160,7 +160,7 @@ func TestProxyInjectWhenIdle(t *testing.T) {
 
 	// The same text reached the editor, which is the point of injection: both
 	// ends watch one conversation.
-	if got := r.editor.said(); !strings.Contains(got, "from chat") {
+	if got := r.editor.waitSaid(t, "from chat"); !strings.Contains(got, "from chat") {
 		t.Errorf("the editor was shown %q, want it to contain %q", got, "from chat")
 	}
 }
