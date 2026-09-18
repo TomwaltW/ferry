@@ -1,9 +1,13 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/TomwaltW/ferry/internal/fsp"
@@ -68,6 +72,10 @@ type ChannelServerConfig struct {
 	UserIDMeta string            `toml:"user_id_meta"` // meta key carrying the sender ID; defaults to user_id
 	ChatIDMeta string            `toml:"chat_id_meta"` // meta key carrying the reply target; defaults to chat_id
 	ReplyTool  string            `toml:"reply_tool"`   // defaults to reply
+	// Approvers governs this entry point alone (spec-p4-b1 3.3): "owner" or
+	// sender IDs as this server reports them; defaults to ["owner"]. Until P4
+	// a channel server borrowed the [wechat] list.
+	Approvers []string `toml:"approvers"`
 }
 
 // ExternalConfig says which entry point the sessions of ferry proxy, ferry
@@ -78,6 +86,21 @@ type ExternalConfig struct {
 
 type WorkspaceConfig struct {
 	Roots []string `toml:"roots"`
+	// UsersRoot turns on per-user workspaces (spec-p4-b1 3.4): a paired user
+	// who is not the bot owner and has no [[workspace.users]] entry works in
+	// <users_root>/<UserDirName> instead of in roots. Empty keeps the P1–P3
+	// behaviour, where every paired user shares roots.
+	UsersRoot string `toml:"users_root"`
+	// Users gives named users roots of their own. An entry wins over
+	// users_root; the bot owner always works in roots.
+	Users []WorkspaceUser `toml:"users"`
+}
+
+// WorkspaceUser is one [[workspace.users]] entry.
+type WorkspaceUser struct {
+	Platform string   `toml:"platform"` // wechat | feishu | channel-<name>
+	ID       string   `toml:"id"`       // the sender ID on that platform
+	Roots    []string `toml:"roots"`
 }
 
 type AgentConfig struct {
@@ -205,6 +228,41 @@ const (
 // appears as.
 const ChannelPlatformPrefix = "channel-"
 
+// ApproverOwner is the approver-list entry that stands for the bot owner, who
+// is recognised on every endpoint of its bot (spec-p4-b1 3.3).
+const ApproverOwner = "owner"
+
+// userDirHashLen is how many hex digits of the SHA-256 end a user directory
+// name: 64 bits, enough that no two users are given the same directory.
+const userDirHashLen = 16
+
+// userDirSafeMax bounds the readable half of a user directory name.
+const userDirSafeMax = 32
+
+// UserDirName is where a paired user works under workspace.users_root
+// (spec-p4-b1 3.4): "<platform>/<safe>-<hash>", with safe the ID with every
+// byte outside [A-Za-z0-9._-], and a leading ".", replaced by "_" and cut to
+// 32 bytes, and hash the first 16 hex digits of the SHA-256 of
+// "<platform>:<id>". The hash keeps apart two IDs that sanitize alike, and
+// since it ends the name, no ID can make it "." or "..". The layout is on
+// disk, so it never changes.
+func UserDirName(platform fsp.Platform, id string) string {
+	safe := []byte(id)
+	for i, c := range safe {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '-':
+		case c == '.' && i > 0:
+		default:
+			safe[i] = '_'
+		}
+	}
+	if len(safe) > userDirSafeMax {
+		safe = safe[:userDirSafeMax]
+	}
+	sum := sha256.Sum256([]byte(string(platform) + ":" + id))
+	return filepath.Join(string(platform), string(safe)+"-"+hex.EncodeToString(sum[:])[:userDirHashLen])
+}
+
 // channelServerNameRe is the shape spec-p3 3.2 gives a channel server name. It
 // also has to survive being pasted into a platform string.
 var channelServerNameRe = regexp.MustCompile(`^[a-z0-9-]{1,24}$`)
@@ -234,6 +292,9 @@ func (s ChannelServerConfig) WithDefaults() ChannelServerConfig {
 	}
 	if s.ReplyTool == "" {
 		s.ReplyTool = DefaultChannelReplyTool
+	}
+	if len(s.Approvers) == 0 {
+		s.Approvers = []string{ApproverOwner}
 	}
 	return s
 }
@@ -275,6 +336,50 @@ func (c Config) EnabledPlatforms() []fsp.Platform {
 	return out
 }
 
+// ApproversFor is the approver list that governs one entry point
+// (spec-p4-b1 3.3): the [wechat] list for wechat, the [feishu] list for
+// feishu, and the list of the named server for channel-<name>. A table that
+// leaves the list out gives ["owner"], and so does a platform no table
+// describes — the fake platform of the tests, a channel server nobody
+// configured — so that no entry point ends up where nobody may approve
+// anything and nothing says why. An empty list written in the file is refused
+// by validation rather than read as either.
+func (c Config) ApproversFor(p fsp.Platform) []string {
+	var list []string
+	switch {
+	case p == fsp.PlatformWeChat:
+		list = c.WeChat.Approvers
+	case p == fsp.PlatformFeishu:
+		list = c.Feishu.Approvers
+	case strings.HasPrefix(string(p), ChannelPlatformPrefix):
+		for _, s := range c.ChannelServers {
+			if s.Platform() == p {
+				list = s.Approvers
+				break
+			}
+		}
+	}
+	if len(list) == 0 {
+		return []string{ApproverOwner}
+	}
+	return slices.Clone(list)
+}
+
+// validApprovers checks one approver list as written in the file: left out is
+// fine, spelled out it must name somebody, and nobody by an empty ID, which
+// would match a sender that has none.
+func validApprovers(field string, list []string) error {
+	if list != nil && len(list) == 0 {
+		return fmt.Errorf("%s: an empty list leaves nobody to approve; leave it out for [%q]", field, ApproverOwner)
+	}
+	for i, who := range list {
+		if strings.TrimSpace(who) == "" {
+			return fmt.Errorf("%s[%d]: empty", field, i)
+		}
+	}
+	return nil
+}
+
 // ValidateEntries checks the P3 entry point tables the way spec-p3 3.2
 // prescribes. Config.Validate lives in config.go, which no P3 task owns, so
 // the caller that reads the configuration runs this alongside it.
@@ -291,6 +396,9 @@ func (c Config) ValidateEntries() error {
 		default:
 			return fmt.Errorf("feishu.domain: %q is neither %q nor %q", c.Feishu.Domain, FeishuDomainFeishu, FeishuDomainLark)
 		}
+		if err := validApprovers("feishu.approvers", c.Feishu.Approvers); err != nil {
+			return err
+		}
 	}
 	seen := make(map[string]bool, len(c.ChannelServers))
 	for i, s := range c.ChannelServers {
@@ -303,6 +411,9 @@ func (c Config) ValidateEntries() error {
 		seen[s.Name] = true
 		if len(s.Command) == 0 {
 			return fmt.Errorf("channel_servers[%d].command: %q has none", i, s.Name)
+		}
+		if err := validApprovers(fmt.Sprintf("channel_servers[%d].approvers", i), s.Approvers); err != nil {
+			return err
 		}
 	}
 	for i, a := range c.Agents {

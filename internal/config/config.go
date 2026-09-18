@@ -272,6 +272,11 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("outbox.long_output: %q is neither %q nor %q", c.Outbox.LongOutput, LongOutputFile, LongOutputSplit)
 	}
+	if c.WeChat.Enabled {
+		if err := validApprovers("wechat.approvers", c.WeChat.Approvers); err != nil {
+			return err
+		}
+	}
 	if err := c.Notify.validate(); err != nil {
 		return err
 	}
@@ -290,6 +295,73 @@ func (c Config) Validate() error {
 		if !info.IsDir() {
 			return fmt.Errorf("workspace.roots[%d]: %q is not a directory", i, root)
 		}
+	}
+	return c.validateUsers()
+}
+
+// validateUsers checks the per-user workspace fields of spec-p4-b1 3.4. Both
+// are optional; a configuration without them validates as it did before P4.
+func (c Config) validateUsers() error {
+	if c.Workspace.UsersRoot != "" {
+		if err := existingDir(c.Workspace.UsersRoot); err != nil {
+			return fmt.Errorf("workspace.users_root: %w", err)
+		}
+	}
+	seen := make(map[string]bool, len(c.Workspace.Users))
+	for i, u := range c.Workspace.Users {
+		if err := c.userPlatform(u.Platform); err != nil {
+			return fmt.Errorf("workspace.users[%d].platform: %w", i, err)
+		}
+		if strings.TrimSpace(u.ID) == "" {
+			return fmt.Errorf("workspace.users[%d].id: must be set", i)
+		}
+		key := u.Platform + ":" + u.ID
+		if seen[key] {
+			return fmt.Errorf("workspace.users[%d]: %s %q is listed more than once", i, u.Platform, u.ID)
+		}
+		seen[key] = true
+		if len(u.Roots) == 0 {
+			return fmt.Errorf("workspace.users[%d].roots: at least one directory is required", i)
+		}
+		for j, root := range u.Roots {
+			if err := existingDir(root); err != nil {
+				return fmt.Errorf("workspace.users[%d].roots[%d]: %w", i, j, err)
+			}
+		}
+	}
+	return nil
+}
+
+// userPlatform checks the platform of a [[workspace.users]] entry: one of the
+// two IM platforms, or a channel server this configuration starts.
+func (c Config) userPlatform(p string) error {
+	switch fsp.Platform(p) {
+	case fsp.PlatformWeChat, fsp.PlatformFeishu:
+		return nil
+	}
+	if strings.HasPrefix(p, ChannelPlatformPrefix) {
+		for _, s := range c.ChannelServers {
+			if string(s.Platform()) == p {
+				return nil
+			}
+		}
+		return fmt.Errorf("%q names no configured channel server", p)
+	}
+	return fmt.Errorf("%q is none of %s, %s and %s<name>", p, fsp.PlatformWeChat, fsp.PlatformFeishu, ChannelPlatformPrefix)
+}
+
+// existingDir checks that p, with ~ expanded, names a directory.
+func existingDir(p string) error {
+	abs, err := expandPath(p)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return fmt.Errorf("%q: %w", p, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%q is not a directory", p)
 	}
 	return nil
 }
@@ -318,6 +390,48 @@ func (c Config) NormalizedRoots() ([]string, error) {
 		roots = append(roots, resolved)
 	}
 	return roots, nil
+}
+
+// NormalizedUsersRoot is workspace.users_root in the form NormalizedRoots
+// gives workspace.roots, or "" when it is unset. A user's directory is
+// filepath.Join of it and UserDirName (spec-p4-b1 3.4).
+func (c Config) NormalizedUsersRoot() (string, error) {
+	if c.Workspace.UsersRoot == "" {
+		return "", nil
+	}
+	p, err := normalizeDir(c.Workspace.UsersRoot)
+	if err != nil {
+		return "", fmt.Errorf("workspace.users_root: %w", err)
+	}
+	return p, nil
+}
+
+// NormalizedRoots are the roots of one [[workspace.users]] entry, in the form
+// Config.NormalizedRoots gives workspace.roots.
+func (u WorkspaceUser) NormalizedRoots() ([]string, error) {
+	out := make([]string, 0, len(u.Roots))
+	for i, root := range u.Roots {
+		p, err := normalizeDir(root)
+		if err != nil {
+			return nil, fmt.Errorf("workspace.users %s %q roots[%d]: %w", u.Platform, u.ID, i, err)
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// normalizeDir expands ~, makes the path absolute and resolves symlinks, as
+// NormalizedRoots does.
+func normalizeDir(p string) (string, error) {
+	abs, err := expandPath(p)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("%q: %w", p, err)
+	}
+	return resolved, nil
 }
 
 // expandPath turns "~" and "~/x" into paths under the user's home directory

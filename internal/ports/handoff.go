@@ -25,7 +25,8 @@ type Handoff interface {
 	// for one minute.
 	Discover(ctx context.Context, ep fsp.EndpointID) ([]TerminalSession, error)
 	// Busy reports whether a terminal process still holds the session.
-	// It returns fsp.ErrUnsupported on Windows.
+	// It returns fsp.ErrUnsupported on a platform whose process table cannot
+	// be read: Linux and macOS can, and Windows can once spec-p4-b1 3.8 is in.
 	Busy(ctx context.Context, ts TerminalSession) (bool, error)
 	// BackCommand returns the command that resumes the session in a terminal.
 	// Agents whose command has not been verified return fsp.ErrUnsupported.
