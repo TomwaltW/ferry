@@ -344,6 +344,23 @@ func (e *editor) WaitForTerminalExit(ctx context.Context, params acp.WaitForTerm
 // said returns the agent text the editor has been shown since the last call.
 // Every notification of a finished turn has arrived by the time its response
 // has, so draining without blocking is enough.
+// waitSaid accumulates what said() drains until want shows up or wait runs out.
+// said() returns whatever happens to be buffered at that instant, so asserting
+// on it directly races the update it is waiting for — Windows is just slow
+// enough at scheduling the pipe for the race to land.
+func (e *editor) waitSaid(t *testing.T, want string) string {
+	t.Helper()
+	var b strings.Builder
+	deadline := time.Now().Add(wait)
+	for {
+		b.WriteString(e.said())
+		if strings.Contains(b.String(), want) || time.Now().After(deadline) {
+			return b.String()
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func (e *editor) said() string {
 	var b strings.Builder
 	for {

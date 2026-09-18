@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -412,7 +413,11 @@ func TestHostRunsEchoChannel(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "echo-channel")
+	name := "echo-channel"
+	if runtime.GOOS == "windows" {
+		name += ".exe" // Windows will not exec a file without the extension
+	}
+	bin := filepath.Join(dir, name)
 	build := exec.Command("go", "build", "-o", bin, "github.com/TomwaltW/ferry/test/e2e/testdata/echo-channel")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the fixture failed: %v\n%s", err, out)

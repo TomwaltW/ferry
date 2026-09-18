@@ -38,12 +38,17 @@ func emptyPath(t *testing.T) string {
 // Nothing runs it; the resolver only has to find it.
 func fakeExe(t *testing.T, dir, name string) string {
 	t.Helper()
-	// Windows only treats a file as executable via PATHEXT, and looks it up
-	// through the extension rather than the permission bits.
+	// Windows looks an executable up through its extension, not the permission
+	// bits. It has to be .exe rather than .bat: the registry spells the Windows
+	// binaries "./kimi.exe", so binaryName hands exec.LookPath a name that
+	// already carries the extension and only an exact .exe matches. Nothing
+	// runs the file, so the contents need not be a real PE image.
 	body, mode := "#!/bin/sh\nexit 0\n", os.FileMode(0o755)
 	if runtime.GOOS == "windows" {
-		name += ".bat"
-		body, mode = "@echo off\r\nexit /b 0\r\n", os.FileMode(0o644)
+		name += ".exe"
+		// "MZ" is the DOS header every PE image starts with. Nothing execs the
+		// file, but an empty one is a thinner fixture than it needs to be.
+		body, mode = "MZ", os.FileMode(0o644)
 	}
 	p := filepath.Join(dir, name)
 	if err := os.WriteFile(p, []byte(body), mode); err != nil {

@@ -125,6 +125,14 @@ func newRig(t *testing.T, opts ...rigOption) *rig {
 	gw.ConfirmScan(ownerID)
 
 	home := t.TempDir()
+	// The core resolves every workspace path (filepath.EvalSymlinks), so the rig
+	// has to hold the resolved spelling too. On macOS the unresolved form is a
+	// substring of the resolved one (/var/... inside /private/var/...), which is
+	// why comparing the raw path passed there by accident; on Windows the 8.3
+	// short name (RUNNER~1) shares no substring with the long one and it fails.
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	}
 	ws := filepath.Join(home, "ws")
 	if err := os.MkdirAll(filepath.Join(ws, "demo"), 0o755); err != nil {
 		t.Fatalf("workspace: %v", err)
