@@ -111,10 +111,13 @@ func TestRunConPTYEcho(t *testing.T) {
 		t.Fatalf("send the prompt: %v", err)
 	}
 	chunk := d.waitMsg(control.MsgEvent)
+	// Logged before the assertion on purpose: when the first event is not the
+	// chunk, what the terminal actually saw is the only thing that says whether
+	// the output never arrived or arrived and was stripped to nothing.
+	t.Logf("the terminal saw %q", out.String())
 	if chunk.Event == nil || chunk.Event.Kind != fsp.EvChunk {
 		t.Fatalf("the first event is %+v, want a chunk", chunk.Event)
 	}
-	t.Logf("the terminal saw %q", out.String())
 	if !strings.Contains(chunk.Event.Text, "got:hello") {
 		t.Errorf("the chunk says %q, want it to contain %q", chunk.Event.Text, "got:hello")
 	}

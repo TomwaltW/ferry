@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -23,7 +24,17 @@ const msgWait = 20 * time.Second
 // runIdle is the quiet period the wrapped program is given in the tests. It is
 // short so a test does not sit through the production 1.5 seconds, and long
 // enough that a shell echoing a line does not look like two turns.
-const runIdle = 150 * time.Millisecond
+//
+// Windows gets the production value instead. A ConPTY round trip — inject, the
+// child reads, the child writes, copyOut reads — regularly takes longer than
+// 150ms on the CI runners, and a turn that ends before the output arrives makes
+// the test see turn_end where it wants the chunk.
+var runIdle = func() time.Duration {
+	if runtime.GOOS == "windows" {
+		return DefaultIdle
+	}
+	return 150 * time.Millisecond
+}()
 
 // fakeDaemon is the control socket half of the daemon: enough of the protocol of
 // spec-p3 3.3 for ferry run to attach and then exchange messages. It lives here
