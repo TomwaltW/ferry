@@ -59,6 +59,10 @@ ferry daemon
 ACP 编辑器）的 agent 命令设成 `ferry proxy <agent>`，编辑器里的会话就会镜像到聊天，
 见 [docs/zh-CN/proxy.md](docs/zh-CN/proxy.md)。
 
+想让守护进程离开终端也一直在线？`ferry service install` 把它交给 launchd、systemd
+或 Windows 服务管理器，以你本人的身份运行，见 [docs/zh-CN/service.md](docs/zh-CN/service.md)。
+`ferry audit export --since 7d` 把审计日志导出为 CSV，不含任何消息正文。
+
 ## 文档
 
 - [快速上手](docs/zh-CN/quickstart.md) —— 安装、登录、第一个会话
@@ -69,6 +73,8 @@ ACP 编辑器）的 agent 命令设成 `ferry proxy <agent>`，编辑器里的�
 - [包装终端程序](docs/zh-CN/pty.md) —— `ferry run`，实验功能
 - [Agent](docs/zh-CN/agents.md) —— 预设、驱动、工作区根目录
 - [接力](docs/zh-CN/handoff.md) —— 会话在终端与聊天之间转移
+- [多用户](docs/zh-CN/multi-user.md) —— 按用户的工作区与审批人
+- [作为系统服务运行](docs/zh-CN/service.md) —— macOS、Linux、Windows 上的 `ferry service`
 - [安全](docs/zh-CN/security.md) —— 凭据、审批、路径限制
 - [常见问题](docs/zh-CN/faq.md)
 - [术语表](docs/glossary.md) —— 中英术语对照

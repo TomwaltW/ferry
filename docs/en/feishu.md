@@ -14,7 +14,12 @@ In the Feishu open platform, create a custom app for your organization and:
 2. Under event subscriptions, choose the long connection (WebSocket) mode and
    subscribe to the "receive message" event. No public URL is needed.
 3. Grant the permissions to read and send direct messages.
-4. Note the App ID and the App Secret, and find your own open_id.
+4. Turn on card callback interaction ("卡片回传交互") for the app, and, still in
+   the long connection mode, subscribe to the card callback
+   `card.action.trigger`. Approval buttons need it; without it approvals still
+   work by text.
+5. Publish the app version so the settings take effect.
+6. Note the App ID and the App Secret, and find your own open_id.
 
 ## Logging in
 
@@ -55,9 +60,23 @@ bind_platform = "feishu"
 
 ## Approvals
 
-Approvals are plain text, exactly as in WeChat: reply `y <code>` to allow once,
-`a <code>` to always allow, `n <code>` to refuse. Interactive cards are planned
-for a later release.
+In Feishu an approval arrives as an interactive card. Its title is the
+approval code, its body is the same text WeChat would show, and it has the
+buttons **Allow once**, **Always allow** (only when the agent offers it) and
+**Reject**. A click answers with the toast "Received; working on it"; the card
+itself does not change, and the decision is confirmed by a normal message, as
+with a text answer. The card goes over the long connection too: no public
+callback URL is needed.
+
+Text answers keep working next to the buttons: reply `y <code>` to allow once,
+`a <code>` to always allow, `n <code>` to refuse. Whichever answer arrives
+first decides; a later click or reply on the same approval is ignored. A click
+counts only when the person clicking is an approver (`approvers` in
+`[feishu]`), exactly as a text answer does.
+
+If Feishu refuses the card — for example because card interaction is not
+enabled for the app — the same approval is sent again as plain text, so it can
+still be answered by text.
 
 ## Limits
 

@@ -45,6 +45,22 @@ Lands in P2.
 Why only one driver may hold a session, what a held session answers, and how a
 stale lock is cleared. Lands in P2.
 
+## Busy terminals
+
+Before `/use` takes over a terminal session, Ferry checks whether the agent is
+still running in a terminal in that session's directory. If it is, the reply
+says the session is in use and nothing is taken over; quit the agent on the
+computer, or send `/use <n> force` to take it anyway. Agents Ferry started
+itself are never counted.
+
+This works on Linux, macOS and Windows. On Windows Ferry reads the process
+table itself: it recognises the agent's command line with backslash paths, a
+`.exe` suffix and quotes, and compares directories without regard to case. A
+process it is not allowed to read — another user's, a protected one, or a
+32-bit process next to a 64-bit Ferry — is skipped. If the process table
+cannot be read at all, the reply says Ferry cannot tell whether a terminal
+holds the session; send `/use <n> force` once you are sure it is closed.
+
 ## Limits
 
 Which agents support handoff, and what degrades when one does not. Lands in P2

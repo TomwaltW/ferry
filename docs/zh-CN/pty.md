@@ -3,7 +3,7 @@
 [English](../en/pty.md) · **中文**
 
 `ferry run` 把一个完全不懂 agent 协议的命令行程序放进伪终端，让聊天可以看它的输出、
-往里打字。这是实验功能，本版本只支持 Linux 和 macOS。
+往里打字。这是实验功能，支持 Linux、macOS 和 Windows。
 
 ## 用法
 
@@ -44,4 +44,5 @@ ferry run --name aider -- aider --no-auto-commits
   有提示请在电脑上处理。
 - 输出判断靠启发式。一直在重绘屏幕的程序永远不会「安静」，这类程序请设置
   `--prompt-regex`。
-- 暂不支持 Windows，`ferry run` 会提示后退出。
+- Windows 上依赖 ConPTY，需要 Windows 10 1809 及以上；更早的 Windows 上
+  `ferry run` 会提示不支持后退出。聊天输入的打字方式和 Linux、macOS 相同。

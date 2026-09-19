@@ -71,11 +71,13 @@ func (r *rig) feishuSend(text string) {
 	})
 }
 
-// feishuTexts is every text the bot sent to the Feishu owner, in order.
+// feishuTexts is every text the bot sent to the Feishu owner, in order. An
+// approval goes out as a card (spec-p4-b1 3.6), whose body is the text the
+// approval would otherwise have been, so cards count too.
 func (r *rig) feishuTexts() []string {
 	var out []string
 	for _, s := range r.fs.Sent() {
-		if s.Kind == feishutest.KindText && s.OpenID == feishuOwner {
+		if (s.Kind == feishutest.KindText || s.Kind == feishutest.KindCard) && s.OpenID == feishuOwner {
 			out = append(out, s.Text)
 		}
 	}
@@ -569,9 +571,8 @@ func TestChannelHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A direct chat: the chat is the owner's own, as in WeChat and Feishu. The
-	// core records a channel server's owner on the endpoint whose peer is the
-	// owner ID, while the endpoint of an inbound message is its chat_id, so
-	// only a chat_id equal to the owner ID is recognised as the owner's.
+	// owner is recognised in any chat of the server (spec-p4-b1 3.3); a chat_id
+	// that differs from the owner ID is TestOwnerAnyChat's case.
 	const user = "u-echo"
 	r := newRig(t, func(r *rig) {
 		r.cfg.ChannelServers = []config.ChannelServerConfig{{

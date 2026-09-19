@@ -29,6 +29,24 @@ Ferry 还没到 1.0。只有最新的发行标签和 `main` 会收到修复。1.
 - 绕过审批流程，使某次工具调用没等到它本该等的裁决就执行了。
 - 把伪造或重放的入站消息当成真实消息接受。
 
+## 已知缺口与部署须知
+
+以下是已知并写进文档的情况，不属于要报告的漏洞；细节见
+[docs/zh-CN/security.md](docs/zh-CN/security.md)。
+
+- **owner 在每个聊天里都算数，channel server 必须携带发送者 ID。**
+  一个 bot 的 owner 在这个 bot 的每一个聊天里都被认作 owner。第三方 channel server
+  的消息不带发送者 ID 时被当作 `local`，也就是默认的 owner；所以一个多人能写、
+  又不报发送者 ID 的 channel server，会让这些人全都成为 owner。这种 server 必须
+  给每条消息带上发送者 ID。
+- **Windows 上的私密文件是已知缺口。** Linux 和 macOS 上是 0600 与 0700 权限；
+  Windows 上 Ferry 不自己设置访问控制列表，文件的私密程度只取决于 `FERRY_HOME`
+  从父目录继承的权限。默认的 `%USERPROFILE%\.ferry` 下只有你本人、SYSTEM 和
+  Administrators 能读；放在共享位置时，本机其他用户也能读。
+- **服务以你本人的身份运行。** `ferry service` 以安装者的账号运行守护进程，绝不用
+  root 或 LocalSystem，所以每个 agent、每条被批准的命令拥有的恰好是你的权限。
+  Windows 上密码只交给服务管理器，Ferry 不保存。
+
 ## 哪些不算
 
 - 运维方只能对自己机器做、而且是故意做的事。

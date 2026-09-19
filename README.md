@@ -65,6 +65,11 @@ Working in an editor? Set Zed's (or any ACP editor's) agent command to
 `ferry proxy <agent>` and the editor session is mirrored to your chat — see
 [docs/en/proxy.md](docs/en/proxy.md).
 
+To keep the daemon running without a terminal, `ferry service install` hands it
+to launchd, systemd or the Windows service manager, running as you — see
+[docs/en/service.md](docs/en/service.md). `ferry audit export --since 7d`
+writes the audit log as CSV, without any message bodies.
+
 ## Documentation
 
 - [Quickstart](docs/en/quickstart.md) — install, log in, first session
@@ -75,6 +80,8 @@ Working in an editor? Set Zed's (or any ACP editor's) agent command to
 - [Wrapping a terminal program](docs/en/pty.md) — `ferry run`, experimental
 - [Agents](docs/en/agents.md) — presets, drivers, workspace roots
 - [Handoff](docs/en/handoff.md) — moving a session between terminal and chat
+- [Multiple users](docs/en/multi-user.md) — per-user workspaces and approvers
+- [Running as a service](docs/en/service.md) — `ferry service` on macOS, Linux and Windows
 - [Security](docs/en/security.md) — secrets, approvals, path limits
 - [FAQ](docs/en/faq.md)
 - [Glossary](docs/glossary.md) — the bilingual term list
