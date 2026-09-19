@@ -34,6 +34,27 @@ fixes. Pre-1.0 versions may change behaviour between minor releases.
   was supposed to wait for.
 - Accepting a forged or replayed inbound message as genuine.
 
+## Known gaps and deployment notes
+
+These are known and documented, not vulnerabilities to report; details are in
+[docs/en/security.md](docs/en/security.md).
+
+- **The owner counts in every chat, and channel servers must report senders.**
+  The owner of a bot is recognised in every chat of that bot. A third-party
+  channel server message without a sender ID counts as `local`, the default
+  owner, so a channel server that several people can write to and that does
+  not report sender IDs makes all of them the owner. Such a server must report
+  the sender ID of every message.
+- **Private files on Windows are a known gap.** Linux and macOS get mode 0600
+  and 0700; on Windows Ferry sets no access control lists of its own, so the
+  files are only as private as the directory `FERRY_HOME` inherits from. Under
+  the default `%USERPROFILE%\.ferry` that is you, SYSTEM and Administrators; in a
+  shared location, other local users can read them.
+- **The service runs as you.** `ferry service` runs the daemon as the account
+  that installed it, never as root or LocalSystem, so every agent and approved
+  command has exactly your permissions. On Windows the password is given to
+  the service manager and not stored by Ferry.
+
 ## What is out of scope
 
 - Anything an operator can only do to their own machine on purpose.

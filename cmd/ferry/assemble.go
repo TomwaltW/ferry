@@ -91,7 +91,7 @@ func assemble(home string, log *slog.Logger) (*assembly, error) {
 	}
 	a := &assembly{Config: cfg, Home: home, Log: log, Store: st, Bundle: i18n.Default()}
 
-	a.IMs, err = buildIMs(cfg, home, st, log)
+	a.IMs, err = buildIMs(cfg, home, st, a.Bundle, log)
 	if err != nil {
 		a.Close()
 		return nil, err
@@ -127,6 +127,9 @@ func assemble(home string, log *slog.Logger) (*assembly, error) {
 		Home:   home,
 	})
 	a.ACL = acl.New(cfg, st, clock.Real())
+	// Each paired user works in roots of their own once workspace.users_root
+	// or [[workspace.users]] is set; otherwise everyone shares workspace.roots.
+	workspaces := acl.NewWorkspaces(cfg, st)
 
 	roots, err := cfg.NormalizedRoots()
 	if err != nil {
@@ -136,6 +139,7 @@ func assemble(home string, log *slog.Logger) (*assembly, error) {
 	a.Approvals = approval.New(approval.Options{
 		Policy:      cfg.Policy,
 		Roots:       roots,
+		Workspaces:  workspaces,
 		DefaultLang: cfg.Lang,
 		Store:       st,
 		Outbox:      a.Outbox,
@@ -155,27 +159,28 @@ func assemble(home string, log *slog.Logger) (*assembly, error) {
 		fsp.DriverServer: server.New(log),
 	}
 	a.Daemon = core.New(core.Deps{
-		Config:    cfg,
-		Home:      home,
-		IMs:       a.IMs,
-		Drivers:   drivers,
-		Waker:     waker,
-		Registry:  a.Registry,
-		Store:     st,
-		Outbox:    a.Outbox,
-		ACL:       a.ACL,
-		Approvals: a.Approvals,
-		Commands:  command.New(),
-		I18n:      a.Bundle,
-		Clock:     clock.Real(),
-		Log:       log,
+		Config:     cfg,
+		Home:       home,
+		IMs:        a.IMs,
+		Drivers:    drivers,
+		Waker:      waker,
+		Registry:   a.Registry,
+		Store:      st,
+		Outbox:     a.Outbox,
+		ACL:        a.ACL,
+		Approvals:  a.Approvals,
+		Workspaces: workspaces,
+		Commands:   command.New(),
+		I18n:       a.Bundle,
+		Clock:      clock.Real(),
+		Log:        log,
 	})
 	return a, nil
 }
 
 // buildIMs creates one adapter per enabled platform, in the order
 // config.EnabledPlatforms gives: WeChat, Feishu, then each channel server.
-func buildIMs(cfg config.Config, home string, st ports.Store, log *slog.Logger) ([]ports.IMAdapter, error) {
+func buildIMs(cfg config.Config, home string, st ports.Store, bundle ports.I18n, log *slog.Logger) ([]ports.IMAdapter, error) {
 	var ims []ports.IMAdapter
 	if cfg.WeChat.Enabled {
 		creds, err := security.LoadCredentials(home, fsp.PlatformWeChat)
@@ -208,6 +213,10 @@ func buildIMs(cfg config.Config, home string, st ports.Store, log *slog.Logger) 
 			Home:   home,
 			Clock:  clock.Real(),
 			Log:    log,
+			// Approvals go out as cards with buttons; without I18n they
+			// would fall back to plain text.
+			I18n: bundle,
+			Lang: langOf(st, cfg.Lang),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("start feishu adapter: %w", err)

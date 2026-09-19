@@ -215,6 +215,7 @@ func (r *rig) start() {
 	if r.cfg.Feishu.Enabled {
 		fs, err := feishu.NewWithClient(feishu.Options{
 			Config: r.cfg.Feishu, Secret: "e2e-secret", Home: r.home, Clock: clock.Real(), Log: log,
+			I18n: r.bundle, Lang: func(fsp.EndpointID) fsp.Lang { return r.cfg.Lang },
 		}, r.fs)
 		if err != nil {
 			t.Fatalf("feishu adapter: %v", err)
@@ -241,8 +242,9 @@ func (r *rig) start() {
 	if err != nil {
 		t.Fatalf("roots: %v", err)
 	}
+	workspaces := acl.NewWorkspaces(r.cfg, st)
 	ap := approval.New(approval.Options{
-		Policy: r.cfg.Policy, Roots: roots, DefaultLang: r.cfg.Lang,
+		Policy: r.cfg.Policy, Roots: roots, Workspaces: workspaces, DefaultLang: r.cfg.Lang,
 		Store: st, Outbox: ob, I18n: r.bundle, Clock: clock.Real(), Log: log,
 	})
 	reg, err := registry.New(r.cfg.Registry, r.cfg.Agents, r.home, log)
@@ -267,7 +269,8 @@ func (r *rig) start() {
 		Config: r.cfg, Home: r.home, IMs: ims,
 		Drivers:  drivers,
 		Registry: reg, Store: st, Outbox: ob, ACL: r.aclmod, Handoff: ho,
-		Approvals: ap, Commands: command.New(), I18n: r.bundle, Clock: clock.Real(), Log: log,
+		Approvals: ap, Workspaces: workspaces,
+		Commands: command.New(), I18n: r.bundle, Clock: clock.Real(), Log: log,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())

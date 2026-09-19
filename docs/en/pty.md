@@ -4,7 +4,7 @@
 
 `ferry run` puts a command-line program that speaks no agent protocol at all
 into a pseudo terminal, so chat can watch it and type into it. It is an
-experimental feature, available on Linux and macOS only this release.
+experimental feature, available on Linux, macOS and Windows.
 
 ## Usage
 
@@ -49,4 +49,6 @@ sent to chat as one reply.
   so when the session starts; answer prompts on the computer.
 - Output detection is a heuristic. A program that keeps redrawing the screen
   never looks idle; set `--prompt-regex` for such programs.
-- Not available on Windows yet; `ferry run` says so and exits.
+- On Windows it needs ConPTY, which arrived in Windows 10 version 1809; on
+  older Windows `ferry run` says it is unsupported and exits. Input from chat
+  is typed the same way as on Linux and macOS.
