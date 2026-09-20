@@ -3,24 +3,90 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/TomwaltW/ferry/internal/config"
 )
 
-// B10 (spec-p2 B10, TestWakeNotifier) is not in this file. The wake-up path it
-// pins — an urgent approval held because the reply window closed, reaching the
-// operator over ntfy (internal/outbox/send.go:169) — only runs when the outbox
-// and the daemon are built with a Waker. The rig builds neither with one
-// (harness_test.go:236 and :268 pass no Waker, and nothing in test/e2e calls
-// notify.New), so notify.ntfy.url is dead configuration here: wakeFor returns
-// early on a nil waker and the fake ntfy server would never be called.
-// Adding that hook means editing harness_test.go, which this round assigns to
-// T2 for the driver-table line alone (spec-p2-backfill G6, 3.1), so per 3.1 and
-// 7 this is reported rather than worked around. A parallel copy of the rig in
-// this file would dodge the file-ownership rule while breaking the harness-hook
-// one, and would fork what TΩ has to merge.
+// withNtfy points the wake-up notifier at a server of our own and turns on the
+// one event B10 is about.
+func withNtfy(base string) rigOption {
+	return func(r *rig) {
+		r.cfg.Notify.Enabled = []string{"ntfy"}
+		r.cfg.Notify.Events = []string{"approval_pending"}
+		r.cfg.Notify.Ntfy = config.NtfyConfig{URL: base, Topic: "ferry-e2e"}
+	}
+}
+
+// B10 (spec-p2 B10): an approval the outbox has to hold because the reply
+// window closed raises one out-of-band reminder. The reminder travels over a
+// third-party service, so it may name the session and nothing else — no tool,
+// no command, no path (internal/outbox/send.go:154).
+func TestWakeNotifier(t *testing.T) {
+	var mu sync.Mutex
+	var reminders []string
+	ntfy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		mu.Lock()
+		// Everything the service gets to see: the topic it is posted to, the
+		// title header, and the body.
+		reminders = append(reminders, req.URL.Path+"\n"+req.Header.Get("Title")+"\n"+string(body))
+		mu.Unlock()
+	}))
+	t.Cleanup(ntfy.Close)
+
+	r := newRig(t, withNtfy(ntfy.URL), withOutbox(func(o *config.OutboxConfig) {
+		o.WindowTTL = config.Duration{Duration: time.Second}
+		o.MergeInterval = config.Duration{Duration: productionMerge}
+	}))
+	r.patience = subprocWait
+
+	// The session is opened on a window that cannot go stale while the agent
+	// starts; only the approval below is meant to arrive out of window.
+	r.pushAged("/new "+agentName+" "+filepath.Join(r.ws, "demo"), -30*time.Second)
+	r.waitOwnerText("会话 1")
+
+	// This prompt opens a window that was already expired when it was born, so
+	// the approval it provokes cannot be delivered: the outbox holds it, and
+	// holding an urgent message is what wakes the notifier.
+	script := filepath.Join(r.ws, "demo", "rotate-prod-keys.sh")
+	r.pushAged("ask execute "+script, 30*time.Second)
+
+	r.waitFor("the notifier to raise a reminder", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(reminders) > 0
+	})
+	mu.Lock()
+	got := append([]string(nil), reminders...)
+	mu.Unlock()
+
+	if len(got) != 1 {
+		t.Fatalf("the notifier raised %d reminders, want exactly one: %q", len(got), got)
+	}
+	note := got[0]
+	if !strings.Contains(note, "有待处理的审批") {
+		t.Errorf("the reminder does not say that an approval is waiting:\n%s", note)
+	}
+	if !strings.Contains(note, "会话 1") {
+		t.Errorf("the reminder does not name the session:\n%s", note)
+	}
+	// The negative half, and the point of the test: none of this may reach a
+	// service the operator does not control.
+	for _, leak := range []string{script, "rotate-prod-keys.sh", r.ws, "execute"} {
+		if strings.Contains(note, leak) {
+			t.Errorf("the reminder hands %q to the notification service:\n%s", leak, note)
+		}
+	}
+}
 
 // B11 (spec-p2 B11): the gateway pushes an encrypted image. The decrypted bytes
 // land in the inbox unchanged, and the path — carried by prompt.attachment — is

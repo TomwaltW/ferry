@@ -32,6 +32,7 @@ import (
 	"github.com/TomwaltW/ferry/internal/im/feishu"
 	"github.com/TomwaltW/ferry/internal/im/feishu/feishutest"
 	"github.com/TomwaltW/ferry/internal/im/wechat"
+	"github.com/TomwaltW/ferry/internal/notify"
 	"github.com/TomwaltW/ferry/internal/outbox"
 	"github.com/TomwaltW/ferry/internal/ports"
 	"github.com/TomwaltW/ferry/internal/registry"
@@ -238,10 +239,22 @@ func (r *rig) start() {
 	for _, im := range ims {
 		byPlatform[im.Platform()] = im
 	}
+	// The waker is built unconditionally, as production does: with no
+	// notify.enabled it holds no channels and every Wake is a no-op, so the
+	// rest of the suite is unaffected.
+	waker, err := notify.New(notify.Options{
+		Config: r.cfg.Notify, I18n: r.bundle,
+		Lang:  func(fsp.EndpointID) fsp.Lang { return r.cfg.Lang },
+		Clock: clock.Real(), Log: log,
+	})
+	if err != nil {
+		t.Fatalf("waker: %v", err)
+	}
 	ob := outbox.New(outbox.Options{
 		Config: r.cfg.Outbox, IMs: byPlatform, Store: st, I18n: r.bundle,
 		Lang:  func(fsp.EndpointID) fsp.Lang { return r.cfg.Lang },
 		Clock: clock.Real(), Log: log,
+		Waker: waker,
 		// Production passes Home (cmd/ferry/assemble.go); without it
 		// fileWanted is always false and long_output = file is inert.
 		Home: r.home,
@@ -282,7 +295,7 @@ func (r *rig) start() {
 		Config: r.cfg, Home: r.home, IMs: ims,
 		Drivers:  drivers,
 		Registry: reg, Store: st, Outbox: ob, ACL: r.aclmod, Handoff: ho,
-		Approvals: ap, Workspaces: workspaces,
+		Approvals: ap, Workspaces: workspaces, Waker: waker,
 		Commands: command.New(), I18n: r.bundle, Clock: clock.Real(), Log: log,
 	})
 
