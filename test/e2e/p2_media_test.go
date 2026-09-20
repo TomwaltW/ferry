@@ -22,18 +22,11 @@ import (
 // this file would dodge the file-ownership rule while breaking the harness-hook
 // one, and would fork what TΩ has to merge.
 
-// withFakeCDN points the adapter's media endpoint at the fake gateway's CDN, so
-// an inbound image is fetched and decrypted from there rather than from the
-// production openilink host.
-func withFakeCDN() rigOption {
-	return func(r *rig) { r.cfg.WeChat.CDNBaseURL = r.gw.CDNBaseURL() }
-}
-
 // B11 (spec-p2 B11): the gateway pushes an encrypted image. The decrypted bytes
 // land in the inbox unchanged, and the path — carried by prompt.attachment — is
 // what the agent is given.
 func TestInboundImage(t *testing.T) {
-	r := newRig(t, withFakeCDN())
+	r := newRig(t)
 	// Opening the session starts the agent, and the image then travels through
 	// the fake CDN; both are slower than the usual settle time on a loaded
 	// machine.

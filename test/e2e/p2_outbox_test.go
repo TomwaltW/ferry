@@ -17,6 +17,7 @@ import (
 	"github.com/TomwaltW/ferry/internal/config"
 	"github.com/TomwaltW/ferry/internal/fsp"
 	"github.com/TomwaltW/ferry/internal/ilinkwire"
+	"github.com/TomwaltW/ferry/internal/ports"
 	"github.com/TomwaltW/ferry/internal/testkit/fakeilink"
 )
 
@@ -30,14 +31,6 @@ func withOutbox(fn func(*config.OutboxConfig)) rigOption {
 // is the opposite of what B7 and B9 need: both want one whole turn in one
 // message, which is what arrives when the mid-turn flush ticker never fires.
 const productionMerge = 30 * time.Second
-
-// withFakeCDN points the adapter's media endpoint at the fake gateway's own
-// CDN. Without it an outbound file is uploaded to the production endpoint that
-// wechat.cdn_base_url names by default (internal/im/wechat/cdn.go), which is
-// what the toml comment on the field means by "tests point it at a fake".
-func withFakeCDN() rigOption {
-	return func(r *rig) { r.cfg.WeChat.CDNBaseURL = r.gw.CDNBaseURL() }
-}
 
 // pushAged sends as the owner with an arrival time of its own. The core opens
 // the reply window at that moment (internal/core/inbound.go), so a message
@@ -247,7 +240,7 @@ func TestPull(t *testing.T) {
 // B9 (spec-p2 2.2): a turn too long for chat goes out as a summary and a file,
 // and /file 1 hands the same file over again.
 func TestLongOutputFile(t *testing.T) {
-	r := newRig(t, withFakeCDN(), withOutbox(func(o *config.OutboxConfig) {
+	r := newRig(t, withOutbox(func(o *config.OutboxConfig) {
 		// Production merging: the whole turn reaches the outbox as one message,
 		// which is what makes it long enough to become a file at all.
 		o.MergeInterval = config.Duration{Duration: productionMerge}
@@ -323,26 +316,29 @@ func TestRetryDedupe(t *testing.T) {
 
 	// It took two attempts, and the second reused the client_id of the first:
 	// the dedupe key the outbox derives from the queue row (outbox/send.go).
-	rows, err := r.store.OutboxByState(context.Background(), r.ep, fsp.DeliveryAccepted)
-	if err != nil {
-		t.Fatalf("list the delivered messages: %v", err)
+	// The gateway holds the message before the outbox marks its row accepted.
+	// Reading the row once loses that race whenever the machine is busy, so
+	// wait for it the way the rest of the suite waits for the gateway.
+	var row ports.OutboxRow
+	r.waitFor("the delivered queue row to carry the message", func() bool {
+		rows, err := r.store.OutboxByState(context.Background(), r.ep, fsp.DeliveryAccepted)
+		if err != nil {
+			return false
+		}
+		for _, candidate := range rows {
+			if candidate.Msg.Text == want {
+				row = candidate
+				return true
+			}
+		}
+		return false
+	})
+	if row.Attempts != 2 {
+		t.Errorf("the message took %d attempts, want 2: one that timed out and one that got through",
+			row.Attempts)
 	}
-	found := false
-	for _, row := range rows {
-		if row.Msg.Text != want {
-			continue
-		}
-		found = true
-		if row.Attempts != 2 {
-			t.Errorf("the message took %d attempts, want 2: one that timed out and one that got through",
-				row.Attempts)
-		}
-		if id := fmt.Sprintf("ob-%d-1", row.ID); records[0].ClientID != id {
-			t.Errorf("the gateway saw client_id %q, want %q, the key the retry reuses",
-				records[0].ClientID, id)
-		}
-	}
-	if !found {
-		t.Fatalf("no delivered queue row carries the message, want the one /use 7 answered")
+	if id := fmt.Sprintf("ob-%d-1", row.ID); records[0].ClientID != id {
+		t.Errorf("the gateway saw client_id %q, want %q, the key the retry reuses",
+			records[0].ClientID, id)
 	}
 }

@@ -158,6 +158,10 @@ func newRig(t *testing.T, opts ...rigOption) *rig {
 		Env:     map[string]string{"FAKEAGENT_HOME": filepath.Join(home, "agent")},
 	}}
 	cfg.WeChat.BaseURL = gw.URL
+	// Without this the adapter uploads and fetches media against the
+	// production WeChat CDN (internal/im/wechat/cdn.go:52). Every rig gets
+	// the fake gateway's own CDN so no test can reach the real one.
+	cfg.WeChat.CDNBaseURL = gw.CDNBaseURL()
 	cfg.Outbox.MergeInterval = config.Duration{Duration: 200 * time.Millisecond}
 	cfg.Policy.ApprovalTimeout = config.Duration{Duration: 2 * time.Second}
 	if err := cfg.Validate(); err != nil {
@@ -238,6 +242,9 @@ func (r *rig) start() {
 		Config: r.cfg.Outbox, IMs: byPlatform, Store: st, I18n: r.bundle,
 		Lang:  func(fsp.EndpointID) fsp.Lang { return r.cfg.Lang },
 		Clock: clock.Real(), Log: log,
+		// Production passes Home (cmd/ferry/assemble.go); without it
+		// fileWanted is always false and long_output = file is inert.
+		Home: r.home,
 	})
 	roots, err := r.cfg.NormalizedRoots()
 	if err != nil {
