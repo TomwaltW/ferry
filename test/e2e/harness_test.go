@@ -24,6 +24,7 @@ import (
 	"github.com/TomwaltW/ferry/internal/control"
 	"github.com/TomwaltW/ferry/internal/core"
 	"github.com/TomwaltW/ferry/internal/driver/acp"
+	"github.com/TomwaltW/ferry/internal/driver/server"
 	"github.com/TomwaltW/ferry/internal/fsp"
 	"github.com/TomwaltW/ferry/internal/handoff"
 	"github.com/TomwaltW/ferry/internal/i18n"
@@ -257,7 +258,12 @@ func (r *rig) start() {
 	}
 	r.driver = acp.NewVersioned(log, func(agent string) string { return versions[agent] })
 	r.aclmod = acl.New(r.cfg, st, clock.Real())
-	drivers := map[fsp.DriverKind]ports.Driver{fsp.DriverACP: r.driver}
+	// The same driver table as cmd/ferry's assemble: an agent with a server
+	// block is driven over HTTP, everything else speaks ACP.
+	drivers := map[fsp.DriverKind]ports.Driver{
+		fsp.DriverACP:    r.driver,
+		fsp.DriverServer: server.New(log),
+	}
 	var ho ports.Handoff
 	if r.handoff {
 		ho = handoff.New(handoff.Options{
