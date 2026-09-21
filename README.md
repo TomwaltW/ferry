@@ -22,7 +22,8 @@ and pick the session back up in your terminal.
 
 ## Status
 
-Ferry is under active construction, and `v0.1.0` is the first tagged release.
+Ferry is under active construction, and `v0.1.0`, the first tagged release, is
+not out yet.
 P1 is in: scan to log in, pairing, managed sessions over ACP, approvals in chat,
 and an outbox that respects WeChat's reply window. P2 added terminal handoff and
 reliable out-of-window delivery. P3 added Feishu, the proxy driver and PTY. P4
@@ -40,7 +41,8 @@ ferry version
 The script picks the release build for your platform, checks it against
 `checksums.txt`, and puts `ferry` in `~/.local/bin`. Set `FERRY_INSTALL_DIR` to
 install somewhere else, or `FERRY_VERSION` to pin a release. The installer
-needs a published release to fetch; `v0.1.0` is the first one.
+needs a published release to fetch, and none is out yet; until `v0.1.0` ships,
+build [from source](#from-source).
 
 Behind the Great Firewall the script itself has to come through a mirror as
 well, not just the downloads it makes:
