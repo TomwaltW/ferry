@@ -63,9 +63,24 @@ chat_id_meta = "chat_id"
 reply_tool = "reply"
 ```
 
-入口名为 `channel-<name>`。`owner` 是被视为 owner 的发送者 ID（默认 `local`）；
+入口名为 `channel-<name>`。`owner` 是被视为 owner 的发送者 ID；
 另外三项分别指定从哪个 meta 键取发送者、从哪个取对话，以及用哪个工具回复。
 server 退出后每分钟重启一次，最多 5 次，之后标为离线。
+
+`owner` 没有默认值。没写 `owner` 的 channel server 没有 owner：上面谁都不是 owner，
+也就谁都配对不了。不带发送者 ID 的消息记在 `local` 名下，只有在写了
+`owner = "local"` 的 server 上它才是 owner。只有 server 不报发送者 ID、且只有你
+一个人能往里写时才这样做（见 [security.md](security.md)）。
+
+### 从 v0.1.0 升级
+
+v0.1.0 在没写 `owner` 时会把它填成 `local`，于是所有不带发送者 ID 的消息都算
+owner 发的。现在没写 `owner` 的 server 就没有 owner。如果你是一个人在用、server
+不报发送者 ID、又依赖旧行为，在它的 `[[channel_servers]]` 里加一行：
+
+```toml
+owner = "local"
+```
 
 ## 限制
 

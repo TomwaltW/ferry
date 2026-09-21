@@ -68,7 +68,7 @@ type ChannelServerConfig struct {
 	Name       string            `toml:"name"` // the platform is channel-<name>
 	Command    []string          `toml:"command"`
 	Env        map[string]string `toml:"env"`
-	Owner      string            `toml:"owner"`        // sender ID treated as the owner; defaults to local
+	Owner      string            `toml:"owner"`        // sender ID treated as the owner; no default, unset means no owner
 	UserIDMeta string            `toml:"user_id_meta"` // meta key carrying the sender ID; defaults to user_id
 	ChatIDMeta string            `toml:"chat_id_meta"` // meta key carrying the reply target; defaults to chat_id
 	ReplyTool  string            `toml:"reply_tool"`   // defaults to reply
@@ -215,8 +215,11 @@ type LimitsConfig struct {
 // P3 readers of these tables apply the defaults themselves through
 // WithDefaults.
 const (
-	DefaultFeishuDomain      = FeishuDomainFeishu
-	DefaultBindPlatform      = string(fsp.PlatformWeChat)
+	DefaultFeishuDomain = FeishuDomainFeishu
+	DefaultBindPlatform = string(fsp.PlatformWeChat)
+	// DefaultChannelOwner is the synthetic sender ID given to a message that
+	// names no sender, and the value to write as owner = "local" to make such
+	// messages the owner's. It is no longer any server's default owner.
 	DefaultChannelOwner      = "local"
 	DefaultChannelUserIDMeta = "user_id"
 	DefaultChannelChatIDMeta = "chat_id"
@@ -279,11 +282,10 @@ func (f FeishuConfig) WithDefaults() FeishuConfig {
 	return f
 }
 
-// WithDefaults fills in the meta keys, the reply tool and the owner.
+// WithDefaults fills in the meta keys, the reply tool and the approvers. The
+// owner is kept as configured and never defaulted: a server with no owner set
+// has no owner.
 func (s ChannelServerConfig) WithDefaults() ChannelServerConfig {
-	if s.Owner == "" {
-		s.Owner = DefaultChannelOwner
-	}
 	if s.UserIDMeta == "" {
 		s.UserIDMeta = DefaultChannelUserIDMeta
 	}

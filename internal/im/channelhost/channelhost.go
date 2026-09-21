@@ -44,6 +44,10 @@ type Adapter struct {
 	clk  clock.Clock
 	log  *slog.Logger
 
+	// noSender warns, once per adapter, that a message named no sender and
+	// so is not the owner's.
+	noSender sync.Once
+
 	mu     sync.Mutex
 	online bool
 	detail string
@@ -65,6 +69,9 @@ func New(opts Options) (*Adapter, error) {
 	log := opts.Log
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
+	}
+	if cfg.Owner == "" {
+		log.Warn("channelhost: this channel server has no owner, so nobody on it is the owner; set owner to your sender ID, or, if the server reports no sender IDs and only you can write to it, to \"local\"", "name", cfg.Name)
 	}
 	return &Adapter{
 		cfg:    cfg,
@@ -169,8 +176,14 @@ func (a *Adapter) inbound(out chan<- fsp.Inbound) mcpmini.NotifyFunc {
 
 		sender := p.Meta[a.cfg.UserIDMeta]
 		if sender == "" {
-			// A server that names no sender is speaking for the person running
-			// it, which is the owner.
+			// A message that names no sender is booked to local. It is the
+			// owner's only where the config sets owner = "local"; anywhere
+			// else it is a stranger's and has to pair like any other.
+			if a.cfg.Owner != config.DefaultChannelOwner {
+				a.noSender.Do(func() {
+					a.log.Warn("channelhost: a message named no sender and is treated as a stranger's, not the owner's; if this server reports no sender IDs and only you can write to it, set owner = \"local\"", "name", a.cfg.Name, "owner", a.cfg.Owner)
+				})
+			}
 			sender = config.DefaultChannelOwner
 		}
 		messageID := p.Meta[claudechannel.MetaMessageID]

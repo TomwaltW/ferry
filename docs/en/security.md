@@ -41,12 +41,14 @@ anyone else: everybody else still pairs per chat and sender.
 
 It does matter for third-party channel servers. A message that arrives without
 a sender ID (the `user_id` meta key, or the key named by `user_id_meta`) counts
-as sent by `local`, and `local` is the default `owner` of a channel server. So
-a channel server that does not report sender IDs makes **everyone who can write
-into any of its chats the owner**: no pairing, owner approvals, owner
-workspace. A channel server that more than one person can write to must report
-the sender ID of every message, and its `owner` must be set to the real owner's
-ID.
+as sent by `local`. A channel server has no owner unless its `owner` is set, so
+by default such a message is a stranger's and has to pair. The risk remains
+only on a server that sets `owner = "local"`: if more than one person can write
+to it, that makes **everyone who can write into any of its chats the owner**:
+no pairing, owner approvals, owner workspace. So set `owner = "local"` only on a
+server that you alone can write to. A channel server that more than one person
+can write to must report the sender ID of every message, and its `owner` must
+be set to the real owner's ID.
 
 ## Private files on Windows
 
