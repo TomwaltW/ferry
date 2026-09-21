@@ -50,6 +50,10 @@ func Open(path string) (ports.Store, error) {
 		sqlDB.Close()
 		return nil, err
 	}
+	if err := restrict(path); err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
 	return &DB{db: sqlDB}, nil
 }
 
