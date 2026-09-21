@@ -51,6 +51,12 @@ func Home() string {
 	if h := os.Getenv("FERRY_HOME"); h != "" {
 		return h
 	}
+	return DefaultHome()
+}
+
+// DefaultHome returns ~/.ferry, the data directory used when FERRY_HOME is
+// unset, whatever FERRY_HOME says right now.
+func DefaultHome() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ".ferry"

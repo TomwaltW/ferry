@@ -155,12 +155,16 @@ func TestCredentialsKeyring(t *testing.T) {
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("credentials landed on disk at %s although the keyring works", path)
 	}
-	blob, err := keyring.Get(keyringService, string(fsp.PlatformWeChat))
+	blob, err := keyring.Get(keyringService, keyringAccount(home, fsp.PlatformWeChat))
 	if err != nil {
 		t.Fatalf("keyring.Get: %v", err)
 	}
 	if !strings.Contains(blob, "sk-secretvalue") {
 		t.Errorf("keyring holds %q, want the credentials as JSON", blob)
+	}
+	// The bare platform account is the legacy one; nothing writes it any more.
+	if _, err := keyring.Get(keyringService, string(fsp.PlatformWeChat)); !errors.Is(err, keyring.ErrNotFound) {
+		t.Errorf("legacy keyring account error = %v, want keyring.ErrNotFound", err)
 	}
 
 	got, err := LoadCredentials(home, fsp.PlatformWeChat)

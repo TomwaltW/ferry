@@ -33,10 +33,12 @@ go install github.com/TomwaltW/ferry/cmd/ferry@latest
 
 Ferry keeps its configuration, database, credentials and logs under
 `FERRY_HOME`, which defaults to `~/.ferry`. Point that variable somewhere else
-if you want to keep several setups apart — with one exception: credentials go
-into the system keyring when there is one, and the keyring entry is shared by
-every `FERRY_HOME` on the machine. A second setup therefore starts out already
-logged in, and `ferry logout` in either one signs both out.
+to keep several setups apart. Each setup has its own login, including the
+entry Ferry keeps in the system keyring, so `ferry logout` in one leaves the
+others signed in.
+
+Upgrading from v0.1.0: the default `~/.ferry` keeps its login. A setup under a
+custom `FERRY_HOME` starts out signed out; run `ferry login` there once more.
 
 ## Configure
 
