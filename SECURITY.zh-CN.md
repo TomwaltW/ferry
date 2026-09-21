@@ -36,9 +36,10 @@ Ferry 还没到 1.0。只有最新的发行标签和 `main` 会收到修复。1.
 
 - **owner 在每个聊天里都算数，channel server 必须携带发送者 ID。**
   一个 bot 的 owner 在这个 bot 的每一个聊天里都被认作 owner。第三方 channel server
-  的消息不带发送者 ID 时被当作 `local`，也就是默认的 owner；所以一个多人能写、
-  又不报发送者 ID 的 channel server，会让这些人全都成为 owner。这种 server 必须
-  给每条消息带上发送者 ID。
+  的消息不带发送者 ID 时被当作 `local`。channel server 不写 `owner` 就没有 owner，
+  所以这样的消息默认算陌生人发的；但一个写了 `owner = "local"`、多人能写、又不报
+  发送者 ID 的 channel server，会让这些人全都成为 owner。这种 server 必须给每条
+  消息带上发送者 ID。
 - **Windows 上的私密文件是已知缺口。** Linux 和 macOS 上是 0600 与 0700 权限；
   Windows 上 Ferry 不自己设置访问控制列表，文件的私密程度只取决于 `FERRY_HOME`
   从父目录继承的权限。默认的 `%USERPROFILE%\.ferry` 下只有你本人、SYSTEM 和

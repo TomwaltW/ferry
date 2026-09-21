@@ -41,10 +41,11 @@ These are known and documented, not vulnerabilities to report; details are in
 
 - **The owner counts in every chat, and channel servers must report senders.**
   The owner of a bot is recognised in every chat of that bot. A third-party
-  channel server message without a sender ID counts as `local`, the default
-  owner, so a channel server that several people can write to and that does
-  not report sender IDs makes all of them the owner. Such a server must report
-  the sender ID of every message.
+  channel server message without a sender ID counts as `local`. A channel
+  server has no owner unless its `owner` is set, so such a message is a
+  stranger's by default; but a server that sets `owner = "local"`, that
+  several people can write to and that does not report sender IDs makes all of
+  them the owner. Such a server must report the sender ID of every message.
 - **Private files on Windows are a known gap.** Linux and macOS get mode 0600
   and 0700; on Windows Ferry sets no access control lists of its own, so the
   files are only as private as the directory `FERRY_HOME` inherits from. Under
