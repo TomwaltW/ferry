@@ -1,6 +1,6 @@
 # Ferry
 
-**English** · [中文版 README](README.zh-CN.md) · Apache-2.0 · status: P1 WeChat + managed sessions
+**English** · [中文版 README](README.zh-CN.md) · Apache-2.0 · status: P4 batch 1 — WeChat + Feishu + managed sessions
 
 Carry your coding agents to chat. Ferry is a self-hosted daemon that puts one
 chat bot in front of every coding agent you already run — so you can start a
@@ -22,11 +22,13 @@ and pick the session back up in your terminal.
 
 ## Status
 
-Ferry is under active construction. P1 is in: scan to log in, pairing, managed
-sessions over ACP, approvals in chat, and an outbox that respects WeChat's reply
-window. Terminal handoff and reliable out-of-window delivery are P2; Feishu, the
-proxy driver and PTY are P3. Everything user-facing ships in English and Chinese
-from day one.
+Ferry is under active construction, and `v0.1.0` is the first tagged release.
+P1 is in: scan to log in, pairing, managed sessions over ACP, approvals in chat,
+and an outbox that respects WeChat's reply window. P2 added terminal handoff and
+reliable out-of-window delivery. P3 added Feishu, the proxy driver and PTY. P4
+batch 1 added per-user workspaces, a bot-wide owner, audit export, Feishu
+approval cards and a system service. Everything user-facing ships in English and
+Chinese from day one.
 
 ## Install
 
@@ -37,7 +39,8 @@ ferry version
 
 The script picks the release build for your platform, checks it against
 `checksums.txt`, and puts `ferry` in `~/.local/bin`. Set `FERRY_INSTALL_DIR` to
-install somewhere else, or `FERRY_VERSION` to pin a release.
+install somewhere else, or `FERRY_VERSION` to pin a release. The installer
+needs a published release to fetch; `v0.1.0` is the first one.
 
 Behind the Great Firewall the script itself has to come through a mirror as
 well, not just the downloads it makes:
