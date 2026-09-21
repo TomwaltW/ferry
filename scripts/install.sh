@@ -116,14 +116,35 @@ detect_platform() {
 	fi
 }
 
+# tag_from_redirect prints the tag that the releases/latest page redirects to,
+# or nothing when that page cannot be reached.
+tag_from_redirect() { # tag_from_redirect <url>
+	final=""
+	if command -v curl >/dev/null 2>&1; then
+		final="$(curl -fsSL -o /dev/null -w '%{url_effective}' "$1" 2>/dev/null || true)"
+	elif command -v wget >/dev/null 2>&1; then
+		final="$(wget -qS --spider "$1" 2>&1 |
+			sed -n 's/^[[:space:]]*Location:[[:space:]]*\([^[:space:]]*\).*/\1/p' | tail -n 1)"
+	fi
+	printf '%s\n' "$final" | sed -n 's|.*/releases/tag/\([^/?]*\)$|\1|p' | head -n 1
+}
+
+# Both lookups go through the mirror prefix. api.github.com is a different host
+# from github.com and is usually the first one a restricted network drops, so
+# the redirect on the releases/latest page -- an ordinary github.com URL that
+# every mirror covers -- is tried first and the API is only the fallback.
 resolve_version() {
 	if [ -n "${FERRY_VERSION:-}" ]; then
 		TAG="$FERRY_VERSION"
 		return
 	fi
-	api_url="https://api.github.com/repos/${REPO}/releases/latest"
-	body="$(fetch_to_stdout "$api_url" 2>/dev/null || true)"
-	TAG="$(printf '%s\n' "$body" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+	latest_url="$(url_with_proxy "https://github.com/${REPO}/releases/latest")"
+	TAG="$(tag_from_redirect "$latest_url")"
+	if [ -z "$TAG" ]; then
+		api_url="$(url_with_proxy "https://api.github.com/repos/${REPO}/releases/latest")"
+		body="$(fetch_to_stdout "$api_url" 2>/dev/null || true)"
+		TAG="$(printf '%s\n' "$body" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+	fi
 	if [ -z "$TAG" ]; then
 		die "cannot resolve the latest release; set FERRY_VERSION=vX.Y.Z and retry" \
 			"无法获取最新版本号；请设置 FERRY_VERSION=vX.Y.Z 后重试"

@@ -69,10 +69,12 @@ release:
     curl -fsSL https://raw.githubusercontent.com/TomwaltW/ferry/{{ .Tag }}/scripts/install.sh | sh
     ```
 
-    Behind the Great Firewall, set a mirror prefix first:
+    Behind the Great Firewall the script itself has to come through the mirror
+    as well, not just the downloads it makes:
 
     ```sh
     export FERRY_GITHUB_PROXY=https://ghfast.top/
+    curl -fsSL "${FERRY_GITHUB_PROXY}https://raw.githubusercontent.com/TomwaltW/ferry/{{ .Tag }}/scripts/install.sh" | sh
     ```
 
     Or download the archive for your platform below and verify it against `checksums.txt`.
@@ -91,10 +93,11 @@ release:
     curl -fsSL https://raw.githubusercontent.com/TomwaltW/ferry/{{ .Tag }}/scripts/install.sh | sh
     ```
 
-    国内网络可先设置镜像前缀：
+    国内网络下，脚本本身也要走镜像，不能只镜像它下载的文件：
 
     ```sh
     export FERRY_GITHUB_PROXY=https://ghfast.top/
+    curl -fsSL "${FERRY_GITHUB_PROXY}https://raw.githubusercontent.com/TomwaltW/ferry/{{ .Tag }}/scripts/install.sh" | sh
     ```
 
     也可以直接下载下方对应平台的压缩包，并用 `checksums.txt` 校验 sha256。
