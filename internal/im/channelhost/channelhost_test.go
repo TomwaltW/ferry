@@ -372,9 +372,32 @@ func TestHostOwnerMapping(t *testing.T) {
 		}
 	})
 
-	t.Run("a server that names no sender speaks for the owner", func(t *testing.T) {
+	t.Run("an explicit local owner keeps a server without sender IDs as its owner", func(t *testing.T) {
 		h := newHarness(t,
-			// No owner and no user_id_meta configured: both default to local.
+			// The owner is set to local by hand; the server names no sender.
+			config.ChannelServerConfig{Name: "demo", Owner: config.DefaultChannelOwner},
+			helper{
+				mode:    modeEcho,
+				content: "hi",
+				meta:    map[string]string{claudechannel.MetaChatID: "chat-7"},
+			},
+		)
+		msg := h.next(t)
+		if msg.SenderID != "local" {
+			t.Errorf("sender = %q, want %q", msg.SenderID, "local")
+		}
+		if got := h.a.Status().OwnerID; got != "local" {
+			t.Errorf("OwnerID = %q, want %q", got, "local")
+		}
+		if msg.MessageID == "" {
+			t.Error("a message the server did not number was given no ID either")
+		}
+	})
+
+	t.Run("a server that names no sender is not the owner by default", func(t *testing.T) {
+		h := newHarness(t,
+			// No owner configured: the server has none, and its unnamed
+			// messages are booked to local, a stranger.
 			config.ChannelServerConfig{Name: "demo"},
 			helper{
 				mode:    modeEcho,
@@ -383,14 +406,15 @@ func TestHostOwnerMapping(t *testing.T) {
 			},
 		)
 		msg := h.next(t)
-		if msg.SenderID != config.DefaultChannelOwner {
-			t.Errorf("sender = %q, want %q", msg.SenderID, config.DefaultChannelOwner)
+		st := h.a.Status()
+		if msg.SenderID != "local" {
+			t.Errorf("sender = %q, want %q", msg.SenderID, "local")
 		}
-		if got := h.a.Status().OwnerID; got != config.DefaultChannelOwner {
-			t.Errorf("OwnerID = %q, want %q", got, config.DefaultChannelOwner)
+		if st.OwnerID != "" {
+			t.Errorf("OwnerID = %q, want none when no owner is configured", st.OwnerID)
 		}
-		if msg.MessageID == "" {
-			t.Error("a message the server did not number was given no ID either")
+		if msg.SenderID == st.OwnerID {
+			t.Errorf("sender %q matches the owner %q, so an unnamed sender would pass for the owner", msg.SenderID, st.OwnerID)
 		}
 	})
 
