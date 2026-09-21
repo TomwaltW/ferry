@@ -9,13 +9,34 @@ sign up for.
 ## Install
 
 ```bash
-go install github.com/TomwaltW/ferry/cmd/ferry@latest
+curl -fsSL https://raw.githubusercontent.com/TomwaltW/ferry/main/scripts/install.sh | sh
 ferry version
+```
+
+The script picks the release build for your platform, checks it against
+`checksums.txt`, and puts `ferry` in `~/.local/bin` — no Go toolchain needed.
+`FERRY_INSTALL_DIR` sends it somewhere else, `FERRY_VERSION` pins a release.
+
+Behind the Great Firewall the script itself has to come through a mirror as
+well, not just the downloads it makes:
+
+```bash
+export FERRY_GITHUB_PROXY=https://ghfast.top/
+curl -fsSL "${FERRY_GITHUB_PROXY}https://raw.githubusercontent.com/TomwaltW/ferry/main/scripts/install.sh" | sh
+```
+
+With a Go toolchain you can build it yourself instead:
+
+```bash
+go install github.com/TomwaltW/ferry/cmd/ferry@latest
 ```
 
 Ferry keeps its configuration, database, credentials and logs under
 `FERRY_HOME`, which defaults to `~/.ferry`. Point that variable somewhere else
-if you want to keep several setups apart.
+if you want to keep several setups apart — with one exception: credentials go
+into the system keyring when there is one, and the keyring entry is shared by
+every `FERRY_HOME` on the machine. A second setup therefore starts out already
+logged in, and `ferry logout` in either one signs both out.
 
 ## Configure
 

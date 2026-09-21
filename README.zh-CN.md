@@ -27,6 +27,28 @@ Ferry 还在施工中。P1 已经进来了：扫码登录、配对、经 ACP 的
 ## 安装
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/TomwaltW/ferry/main/scripts/install.sh | sh
+ferry version
+```
+
+脚本会挑出对应平台的发布版二进制，用 `checksums.txt` 校验 sha256，装进
+`~/.local/bin`。想装到别处设 `FERRY_INSTALL_DIR`，想钉住某个版本设
+`FERRY_VERSION`。
+
+国内网络下，**脚本本身也要走镜像**，不能只镜像它下载的文件：
+
+```sh
+export FERRY_GITHUB_PROXY=https://ghfast.top/
+curl -fsSL "${FERRY_GITHUB_PROXY}https://raw.githubusercontent.com/TomwaltW/ferry/main/scripts/install.sh" | sh
+```
+
+每个 release 也附带压缩包和 `checksums.txt`，可以手动下载并自行校验。
+
+### 从源码装
+
+有 Go 工具链时：
+
+```sh
 go install github.com/TomwaltW/ferry/cmd/ferry@latest
 ```
 

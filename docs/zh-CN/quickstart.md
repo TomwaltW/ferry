@@ -8,12 +8,32 @@ Ferry 是你自己跑的守护进程，不是要注册的服务。
 ## 安装
 
 ```bash
-go install github.com/TomwaltW/ferry/cmd/ferry@latest
+curl -fsSL https://raw.githubusercontent.com/TomwaltW/ferry/main/scripts/install.sh | sh
 ferry version
 ```
 
+脚本会挑出对应平台的发布版二进制，用 `checksums.txt` 校验 sha256，装进
+`~/.local/bin` —— **不需要 Go 工具链**。想装到别处设 `FERRY_INSTALL_DIR`，
+想钉住某个版本设 `FERRY_VERSION`。
+
+国内网络下，**脚本本身也要走镜像**，不能只镜像它下载的文件：
+
+```bash
+export FERRY_GITHUB_PROXY=https://ghfast.top/
+curl -fsSL "${FERRY_GITHUB_PROXY}https://raw.githubusercontent.com/TomwaltW/ferry/main/scripts/install.sh" | sh
+```
+
+有 Go 工具链的话，也可以自己构建：
+
+```bash
+go install github.com/TomwaltW/ferry/cmd/ferry@latest
+```
+
 配置、数据库、凭据和日志都放在 `FERRY_HOME` 下，默认是 `~/.ferry`。
-想同时维护几套环境，把这个环境变量指到别处即可。
+想同时维护几套环境，把这个环境变量指到别处即可——**只有凭据是例外**：
+有系统钥匙串时凭据存进钥匙串，而那一条钥匙串记录是整台机器共用的，不跟着
+`FERRY_HOME` 走。所以第二套环境一起手就已经是登录状态，在任意一套里
+`ferry logout` 也会把两边一起登出。
 
 ## 配置
 

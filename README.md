@@ -31,6 +31,30 @@ from day one.
 ## Install
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/TomwaltW/ferry/main/scripts/install.sh | sh
+ferry version
+```
+
+The script picks the release build for your platform, checks it against
+`checksums.txt`, and puts `ferry` in `~/.local/bin`. Set `FERRY_INSTALL_DIR` to
+install somewhere else, or `FERRY_VERSION` to pin a release.
+
+Behind the Great Firewall the script itself has to come through a mirror as
+well, not just the downloads it makes:
+
+```sh
+export FERRY_GITHUB_PROXY=https://ghfast.top/
+curl -fsSL "${FERRY_GITHUB_PROXY}https://raw.githubusercontent.com/TomwaltW/ferry/main/scripts/install.sh" | sh
+```
+
+Every release also carries the archives and a `checksums.txt` you can download
+and verify by hand.
+
+### From source
+
+With a Go toolchain:
+
+```sh
 go install github.com/TomwaltW/ferry/cmd/ferry@latest
 ```
 
