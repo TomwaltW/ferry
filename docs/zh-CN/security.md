@@ -36,11 +36,12 @@ P1 补充。
 「聊天 + 发送者」配对。
 
 但对第三方 channel server 有影响。不带发送者 ID（meta 里的 `user_id`，或
-`user_id_meta` 指定的键）的消息被当作 `local` 发的，而 `local` 正是 channel server
-默认的 `owner`。所以一个不报发送者 ID 的 channel server，会让**任何能往它任一聊天里
+`user_id_meta` 指定的键）的消息被当作 `local` 发的。channel server 不写 `owner`
+就没有 owner，所以默认情况下这样的消息是陌生人发的，要走配对。风险只存在于写了
+`owner = "local"` 的 server 上：如果多人能往里写，它会让**任何能往它任一聊天里
 发消息的人都成为 owner**：不用配对、能批 owner 的审批、用 owner 的工作区。
-多人能写的 channel server 必须给每条消息带上发送者 ID，并把 `owner` 设成真正
-owner 的 ID。
+所以 `owner = "local"` 只给只有你一个人能写的 server 用。多人能写的 channel server
+必须给每条消息带上发送者 ID，并把 `owner` 设成真正 owner 的 ID。
 
 ## Windows 上的私密文件
 

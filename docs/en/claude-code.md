@@ -71,9 +71,26 @@ reply_tool = "reply"
 ```
 
 The entry point is called `channel-<name>`. `owner` is the sender ID treated as
-the owner (`local` by default); the three other keys say which meta keys carry
-the sender and the chat, and which tool sends a reply. A server that exits is
-restarted once a minute, five times at most, and then reported offline.
+the owner; the three other keys say which meta keys carry the sender and the
+chat, and which tool sends a reply. A server that exits is restarted once a
+minute, five times at most, and then reported offline.
+
+`owner` has no default. A channel server with no `owner` has no owner: nobody
+on it is the owner, so nobody on it can pair either. A message that names no
+sender is booked to `local`, and is the owner's only on a server that sets
+`owner = "local"`. Do that only if the server reports no sender IDs and you are
+the only one who can write to it (see [security.md](security.md)).
+
+### Upgrading from v0.1.0
+
+In v0.1.0, a channel server with no `owner` got `local` filled in, so every
+message that named no sender came from the owner. Now a server with no `owner`
+has no owner. If you run a server alone, it reports no sender IDs, and you
+relied on the old behaviour, add this line to its `[[channel_servers]]` table:
+
+```toml
+owner = "local"
+```
 
 ## Limits
 
