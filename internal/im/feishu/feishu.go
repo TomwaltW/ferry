@@ -71,7 +71,7 @@ const (
 
 type Options struct {
 	Config config.FeishuConfig
-	Secret string // app secret, read from the keyring
+	Secret string // app secret, read from the credential store
 	Home   string
 	Clock  clock.Clock
 	Log    *slog.Logger

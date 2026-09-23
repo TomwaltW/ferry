@@ -34,8 +34,9 @@ go install github.com/TomwaltW/ferry/cmd/ferry@latest
 存进系统钥匙串的凭据也按 `FERRY_HOME` 分开，在其中一套里 `ferry logout`
 不会登出别的。
 
-从 v0.1.0 升级：默认的 `~/.ferry` 自动沿用原来的登录态；用自定义
-`FERRY_HOME` 的环境升级后是未登录状态，需要重新 `ferry login` 一次。
+从 v0.1.0 之前的版本升级：默认的 `~/.ferry` 自动沿用原来的登录态；
+用自定义 `FERRY_HOME`、登录存在系统钥匙串里的环境，升级后是未登录状态，
+需要重新 `ferry login` 一次；登录存在 `$FERRY_HOME/credentials/` 下的不受影响。
 
 ## 配置
 

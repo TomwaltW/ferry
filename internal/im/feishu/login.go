@@ -21,8 +21,9 @@ import (
 var newClient = func(opts Options) (Client, error) { return newSDKClient(opts) }
 
 // LoginInteractive asks for the app ID, the app secret and the owner's open
-// ID, verifies them with Ping, puts the secret in the keyring and writes the
-// rest to the configuration.
+// ID, verifies them with Ping, stores the secret with security.SaveCredentials
+// (this home's keyring account, or <home>/credentials/feishu.json without a
+// keyring) and writes the rest to the configuration.
 func LoginInteractive(ctx context.Context, in io.Reader, out io.Writer, home string) error {
 	path := config.Path(home)
 	cfg, err := config.Load(path)
@@ -69,8 +70,9 @@ func LoginInteractive(ctx context.Context, in io.Reader, out io.Writer, home str
 		return err
 	}
 
-	// The secret lives in the keyring only; the configuration carries the two
-	// identifiers, which are not secret.
+	// The secret goes to the credential store only: this home's keyring
+	// account, or <home>/credentials/feishu.json where there is no keyring.
+	// The configuration carries the two identifiers, which are not secret.
 	if err := security.SaveCredentials(home, fsp.PlatformFeishu, ports.Credentials{
 		BotToken: secret,
 		BotID:    appID,

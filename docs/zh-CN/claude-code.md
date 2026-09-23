@@ -72,11 +72,13 @@ server 退出后每分钟重启一次，最多 5 次，之后标为离线。
 `owner = "local"` 的 server 上它才是 owner。只有 server 不报发送者 ID、且只有你
 一个人能往里写时才这样做（见 [security.md](security.md)）。
 
-### 从 v0.1.0 升级
+### 从 v0.1.0 之前的版本升级
 
-v0.1.0 在没写 `owner` 时会把它填成 `local`，于是所有不带发送者 ID 的消息都算
-owner 发的。现在没写 `owner` 的 server 就没有 owner。如果你是一个人在用、server
-不报发送者 ID、又依赖旧行为，在它的 `[[channel_servers]]` 里加一行：
+v0.1.0 之前从源码构建的版本在没写 `owner` 时会把它填成 `local`，于是所有不带
+发送者 ID 的消息都算 owner 发的。现在没写 `owner` 的 server 就没有 owner。
+守护进程每次启动时，都会删掉 channel server 上已不是配置里 `owner` 的旧 owner，
+包括这类版本留下的 `local`。如果你是一个人在用、server 不报发送者 ID、又依赖
+旧行为，在它的 `[[channel_servers]]` 里加一行：
 
 ```toml
 owner = "local"
@@ -85,7 +87,7 @@ owner = "local"
 ## 限制
 
 - 兼容模式不向第三方 server 转发审批请求。
-- 这个 server 的每一个聊天里都认得出 owner，不只是单聊
+- owner（如有）在这个 server 的每一个聊天里都会被认出，不只是单聊
   （见 [multi-user.md](multi-user.md)）。其他人仍然按「聊天 + 发送者」配对：
   在一个聊天里配对过，换到另一个聊天还要重新配对。
 - meta 键只能含字母、数字和下划线，其他键会被 Claude Code 静默丢弃。

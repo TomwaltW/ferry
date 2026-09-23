@@ -91,10 +91,10 @@ func LoadCredentials(home string, platform fsp.Platform) (ports.Credentials, err
 		return c, nil
 	}
 
-	// Up to v0.1.0 the keyring account was the bare platform name, shared by
-	// every FERRY_HOME. That legacy account is read for the default home only,
-	// so a fresh setup elsewhere never inherits the real login. It is copied to
-	// the new account and left in place.
+	// Source builds before v0.1.0 used the bare platform name as the keyring
+	// account, shared by every FERRY_HOME. That legacy account is read for the
+	// default home only, so a fresh setup elsewhere never inherits the real
+	// login. It is copied to the new account and left in place.
 	//
 	// Remove this migration in the release after the one that ships it.
 	if isDefaultHome(home) {
