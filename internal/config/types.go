@@ -47,7 +47,9 @@ type WeChatConfig struct {
 }
 
 // FeishuConfig is the second IM entry point. The app secret never reaches this
-// file: ferry login feishu puts it in the keyring under the platform "feishu".
+// file: ferry login feishu puts it in the keyring under an account of its own
+// for each FERRY_HOME ("feishu@" plus a hash of the home), or in
+// <FERRY_HOME>/credentials/feishu.json where there is no keyring.
 type FeishuConfig struct {
 	Enabled     bool     `toml:"enabled"`
 	AppID       string   `toml:"app_id"`

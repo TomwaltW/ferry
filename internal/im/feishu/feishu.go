@@ -15,8 +15,10 @@ import (
 	"github.com/TomwaltW/ferry/internal/ports"
 )
 
-// KeyringPlatform is the keyring entry holding the app secret; the
-// configuration file only ever carries the app ID.
+// KeyringPlatform is the platform part of the keyring account that holds the
+// app secret. The account is "feishu@" plus a hash of FERRY_HOME, one per
+// setup (see security.SaveCredentials); the configuration file carries the
+// app ID, never the secret.
 const KeyringPlatform = "feishu"
 
 // RatePerSec is the send rate spec-p3 3.4 fixes for Feishu; unlike WeChat it
