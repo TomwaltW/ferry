@@ -81,12 +81,15 @@ sender is booked to `local`, and is the owner's only on a server that sets
 `owner = "local"`. Do that only if the server reports no sender IDs and you are
 the only one who can write to it (see [security.md](security.md)).
 
-### Upgrading from v0.1.0
+### Upgrading from a build before v0.1.0
 
-In v0.1.0, a channel server with no `owner` got `local` filled in, so every
-message that named no sender came from the owner. Now a server with no `owner`
-has no owner. If you run a server alone, it reports no sender IDs, and you
-relied on the old behaviour, add this line to its `[[channel_servers]]` table:
+Builds made from source before v0.1.0 filled in `local` for a channel server
+with no `owner`, so every message that named no sender came from the owner.
+Now a server with no `owner` has no owner. Each time the daemon starts, it
+drops any owner of a channel server that the server's `owner` key no longer
+names, including a `local` left behind by such a build. If you run a server
+alone, it reports no sender IDs, and you relied on the old behaviour, add
+this line to its `[[channel_servers]]` table:
 
 ```toml
 owner = "local"
@@ -95,8 +98,9 @@ owner = "local"
 ## Limits
 
 - Compatibility mode forwards no approvals to the third-party server.
-- The owner is recognised in every chat of the server, not only in direct
-  chats (see [multi-user.md](multi-user.md)). Everyone else still pairs per
-  chat and sender, so a pairing in one chat does not carry over to another.
+- The owner, if one is set, is recognised in every chat of the server, not
+  only in direct chats (see [multi-user.md](multi-user.md)). Everyone else
+  still pairs per chat and sender, so a pairing in one chat does not carry
+  over to another.
 - Meta keys may contain only letters, digits and underscores; Claude Code
   silently drops any other key.

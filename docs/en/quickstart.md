@@ -37,8 +37,10 @@ to keep several setups apart. Each setup has its own login, including the
 entry Ferry keeps in the system keyring, so `ferry logout` in one leaves the
 others signed in.
 
-Upgrading from v0.1.0: the default `~/.ferry` keeps its login. A setup under a
-custom `FERRY_HOME` starts out signed out; run `ferry login` there once more.
+Upgrading from a build before v0.1.0: the default `~/.ferry` keeps its login.
+A setup under a custom `FERRY_HOME` whose login was in the system keyring
+starts out signed out; run `ferry login` there once more. A login kept in
+`$FERRY_HOME/credentials/` carries over.
 
 ## Configure
 
