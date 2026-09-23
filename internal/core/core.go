@@ -238,14 +238,33 @@ func (d *Daemon) parkStaleSessions(ctx context.Context) error {
 
 // adoptOwner tells the ACL who owns each entry point: every platform has an
 // owner of its own, and one of them signing in says nothing about the others.
+//
+// A channel server's owner comes from the configuration alone, so after the
+// configured owner is recorded, every other owner of that server is dropped:
+// one the configuration used to name, or the "local" owner earlier builds
+// recorded by default. WeChat and Feishu keep the owners they had.
 func (d *Daemon) adoptOwner(ctx context.Context) {
 	for _, im := range d.deps.IMs {
 		st := im.Status()
-		if st.BotID == "" || st.OwnerID == "" {
+		if st.BotID == "" {
 			continue
 		}
-		if err := d.deps.ACL.SetOwner(ctx, im.Platform(), st.BotID, st.OwnerID); err != nil {
-			d.log.Error("set owner", "platform", string(im.Platform()), "error", err)
+		platform := im.Platform()
+		if st.OwnerID != "" {
+			if err := d.deps.ACL.SetOwner(ctx, platform, st.BotID, st.OwnerID); err != nil {
+				d.log.Error("set owner", "platform", string(platform), "error", err)
+			}
+		}
+		if !strings.HasPrefix(string(platform), config.ChannelPlatformPrefix) {
+			continue
+		}
+		n, err := d.deps.Store.DeleteOwnersExcept(ctx, platform, st.BotID, st.OwnerID)
+		if err != nil {
+			d.log.Error("remove stale channel owners", "server", st.BotID, "error", err)
+			continue
+		}
+		if n > 0 {
+			d.log.Info("removed stale channel owners", "server", st.BotID, "removed", n)
 		}
 	}
 }

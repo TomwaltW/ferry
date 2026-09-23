@@ -50,6 +50,14 @@ server that you alone can write to. A channel server that more than one person
 can write to must report the sender ID of every message, and its `owner` must
 be set to the real owner's ID.
 
+A channel server's owner is taken from its configuration every time the daemon
+starts, and nobody else on that server keeps the role. Change `owner` from one
+ID to another and the old ID stops being the owner at the next start; remove
+`owner` and nobody on the server is the owner. This also removes the `local`
+owner that earlier builds recorded for a server with no `owner` set. Only
+channel servers work this way: on WeChat and Feishu an earlier owner keeps the
+role.
+
 ## Private files on Windows
 
 On Linux and macOS, Ferry writes its private files (credentials when the

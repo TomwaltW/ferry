@@ -210,6 +210,10 @@ func (s *memStore) CountPairings(context.Context, fsp.EndpointID, time.Time) (in
 	return 0, fsp.ErrUnsupported
 }
 
+func (s *memStore) DeleteOwnersExcept(context.Context, fsp.Platform, string, string) (int, error) {
+	return 0, fsp.ErrUnsupported
+}
+
 var _ ports.Store = (*memStore)(nil)
 
 // fakeIM records what was sent and hands out scripted outcomes.
