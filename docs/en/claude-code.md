@@ -95,7 +95,8 @@ owner = "local"
 ## Limits
 
 - Compatibility mode forwards no approvals to the third-party server.
-- The owner is recognised in direct chats, where the server's `chat_id` is the
-  owner's own ID; in any other chat the owner is treated as a new sender.
+- The owner is recognised in every chat of the server, not only in direct
+  chats (see [multi-user.md](multi-user.md)). Everyone else still pairs per
+  chat and sender, so a pairing in one chat does not carry over to another.
 - Meta keys may contain only letters, digits and underscores; Claude Code
   silently drops any other key.

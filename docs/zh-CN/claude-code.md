@@ -85,6 +85,7 @@ owner = "local"
 ## 限制
 
 - 兼容模式不向第三方 server 转发审批请求。
-- 只有在单聊里（server 给的 `chat_id` 就是 owner 自己的 ID）才认得出 owner；
-  在其他对话里，owner 会被当作新的发送者。
+- 这个 server 的每一个聊天里都认得出 owner，不只是单聊
+  （见 [multi-user.md](multi-user.md)）。其他人仍然按「聊天 + 发送者」配对：
+  在一个聊天里配对过，换到另一个聊天还要重新配对。
 - meta 键只能含字母、数字和下划线，其他键会被 Claude Code 静默丢弃。
