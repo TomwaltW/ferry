@@ -794,6 +794,27 @@ func (m *memStore) Role(ctx context.Context, ep fsp.EndpointID, senderID string)
 	return m.roles[ep.String()+"/"+senderID], nil
 }
 
+// DeleteOwnersExcept mirrors the SQLite store: it removes the owner rows at the
+// owners' own endpoints of the bot, all but keep's.
+func (m *memStore) DeleteOwnersExcept(ctx context.Context, platform fsp.Platform, botID, keep string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := string(platform) + ":" + botID + ":"
+	n := 0
+	for key, role := range m.roles {
+		if role != "owner" || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		peer, sender, ok := strings.Cut(key[len(prefix):], "/")
+		if !ok || peer != sender || (keep != "" && sender == keep) {
+			continue
+		}
+		delete(m.roles, key)
+		n++
+	}
+	return n, nil
+}
+
 func (m *memStore) AddPairing(ctx context.Context, p ports.Pairing) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

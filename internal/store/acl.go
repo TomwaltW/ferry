@@ -101,6 +101,26 @@ func (d *DB) CountPairings(ctx context.Context, ep fsp.EndpointID, now time.Time
 	return n, nil
 }
 
+// DeleteOwnersExcept removes the owner rows SetOwner wrote on the bot, the ones
+// at the owner's own endpoint "<platform>:<bot>:<sender>", for every sender
+// but keep; an empty keep removes them all. The endpoint is compared whole,
+// so a "%" or "_" in a bot ID stands only for itself.
+func (d *DB) DeleteOwnersExcept(ctx context.Context, platform fsp.Platform, botID, keep string) (int, error) {
+	prefix := string(platform) + ":" + botID + ":"
+	res, err := d.db.ExecContext(ctx, `
+		DELETE FROM acl
+		WHERE role = 'owner' AND endpoint = ? || sender_id AND (? = '' OR sender_id <> ?)`,
+		prefix, keep, keep)
+	if err != nil {
+		return 0, fmt.Errorf("store: delete owners of %s:%s: %w", platform, botID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: delete owners of %s:%s: %w", platform, botID, err)
+	}
+	return int(n), nil
+}
+
 func (d *DB) Audit(ctx context.Context, e ports.AuditEntry) error {
 	_, err := d.db.ExecContext(ctx, `
 		INSERT INTO audit (at, kind, endpoint, sender_id, session_id, detail)

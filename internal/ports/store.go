@@ -82,6 +82,10 @@ type Store interface {
 	AddPairing(ctx context.Context, p Pairing) error
 	TakePairing(ctx context.Context, code string, now time.Time) (Pairing, error) // taking deletes it; missing or expired yields fsp.ErrNotFound
 	CountPairings(ctx context.Context, ep fsp.EndpointID, now time.Time) (int, error)
+	// DeleteOwnersExcept removes the owner role that SetOwner recorded on the
+	// bot for every sender but keep, and reports how many rows went. An empty
+	// keep removes them all. Other roles and other bots are left alone.
+	DeleteOwnersExcept(ctx context.Context, platform fsp.Platform, botID, keep string) (int, error)
 
 	// HoldOutbox marks a row held and records when.
 	HoldOutbox(ctx context.Context, id int64, at time.Time) error
