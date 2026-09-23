@@ -40,7 +40,8 @@ var loginCmd = &cobra.Command{
 }
 
 // loginFeishu asks for the app's credentials, checks them against Feishu and
-// stores them: the secret in the keyring, the rest in the configuration.
+// stores them: the secret in this home's keyring account (or under
+// <home>/credentials/ without a keyring), the rest in the configuration.
 func loginFeishu(cmd *cobra.Command) error {
 	home := homeDir()
 	if _, err := config.Load(config.Path(home)); err != nil {

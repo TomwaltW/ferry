@@ -26,7 +26,7 @@ func homeDefault(t *testing.T) string {
 }
 
 // homeSeedLegacy stores creds() under the bare platform account, the way
-// v0.1.0 did, and returns the stored blob.
+// source builds before v0.1.0 did, and returns the stored blob.
 func homeSeedLegacy(t *testing.T) string {
 	t.Helper()
 	raw, err := json.Marshal(creds())
