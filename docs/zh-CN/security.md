@@ -43,6 +43,12 @@ P1 补充。
 所以 `owner = "local"` 只给只有你一个人能写的 server 用。多人能写的 channel server
 必须给每条消息带上发送者 ID，并把 `owner` 设成真正 owner 的 ID。
 
+channel server 的 owner 在守护进程每次启动时都按配置重新确定，这个 server 上的
+其他人不会保留 owner 身份。把 `owner` 从一个 ID 改成另一个，旧 ID 在下次启动时
+就不再是 owner；删掉 `owner`，这个 server 上就没有 owner。早期版本给没写 `owner`
+的 server 记下的 `local` owner，也会这样被撤掉。只有 channel server 这样处理：
+微信和飞书上，之前的 owner 仍然保留 owner 身份。
+
 ## Windows 上的私密文件
 
 在 Linux 和 macOS 上，Ferry 写私密文件（钥匙串不可用时的凭据、配置文件、下载的
