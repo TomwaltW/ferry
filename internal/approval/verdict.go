@@ -61,8 +61,21 @@ func (m *manager) Resolve(ctx context.Context, id string, d fsp.Decision, by str
 	v := fsp.Verdict{ApprovalID: id, Decision: d, OptionID: optionID, By: by}
 	p.result <- v
 	m.persist(ctx, v, p.req)
-	m.reply(ctx, p, "approval.decided", map[string]any{"ID": id, "Decision": string(d)})
+	m.reply(ctx, p, "approval.decided", map[string]any{"ID": id, "Decision": m.decisionText(d)})
 	return true
+}
+
+// decisionText is the decision as the follow-up message words it, never the raw
+// value the drivers see.
+func (m *manager) decisionText(d fsp.Decision) string {
+	switch d {
+	case fsp.DecisionAllowOnce:
+		return m.t("approval.decision.allow_once", nil)
+	case fsp.DecisionAllowAlways:
+		return m.t("approval.decision.allow_always", nil)
+	default:
+		return m.t("approval.decision.reject", nil)
+	}
 }
 
 // CancelSession ends every approval still open for the session, as a refusal
