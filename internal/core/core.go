@@ -90,6 +90,9 @@ type Daemon struct {
 	// gatherFired carries a gather timer back to the Run loop, which starts
 	// the turn, so that turns never start beside /stop, /close or shutdown.
 	gatherFired chan gatherTick
+	// nudged is, per endpoint, the approval whose "still waiting" notice went
+	// out last, so a run of messages gets one.
+	nudged map[string]string
 	// baseCtx is the daemon's own context, so that an external session attached
 	// over the control socket also ends when the daemon does.
 	baseCtx context.Context
@@ -113,6 +116,7 @@ func New(d Deps) *Daemon {
 		imFailed:  make(map[fsp.Platform]string),
 
 		gatherFired: make(chan gatherTick),
+		nudged:      make(map[string]string),
 	}
 	bind := fsp.Platform(d.Config.External.WithDefaults().BindPlatform)
 	for _, im := range d.IMs {

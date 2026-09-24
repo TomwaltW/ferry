@@ -47,9 +47,18 @@ func TestParseVerdictChinese(t *testing.T) {
 		{"拒绝", "", fsp.DecisionReject},
 		{"y", "", fsp.DecisionAllowOnce},
 		{"Yes", "", fsp.DecisionAllowOnce},
-		{"a", "", fsp.DecisionAllowAlways},
 		{"N", "", fsp.DecisionReject},
 		{"no.", "", fsp.DecisionReject},
+
+		// A comma or colon between the word and the ID, as a pinyin keyboard
+		// puts it.
+		{"同意，abcde", "abcde", fsp.DecisionAllowOnce},
+		{"y, abcde", "abcde", fsp.DecisionAllowOnce},
+		{"拒绝：abcde", "abcde", fsp.DecisionReject},
+		{"同意，", "", fsp.DecisionAllowOnce},
+
+		// "a" still always allows with its ID.
+		{"a abcde", "abcde", fsp.DecisionAllowAlways},
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
@@ -75,6 +84,9 @@ func TestParseVerdictChinese(t *testing.T) {
 		{"好", "not a decision word"},
 		{"ok", "not a decision word"},
 		{"。", "punctuation only"},
+		{"a", "a pinyin keyboard sends a lone a for 啊"},
+		{"A", "a pinyin keyboard sends a lone a for 啊"},
+		{"always", "always allowing needs the ID"},
 	}
 	for _, tt := range notVerdicts {
 		if id, d, ok := h.m.ParseVerdict(tt.in); ok {

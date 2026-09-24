@@ -92,6 +92,10 @@ func (d *Daemon) gather(ctx context.Context, s *session, frag fragment) bool {
 // fireGather starts the turn a gather was waiting for, unless its timer has
 // gone stale.
 func (d *Daemon) fireGather(ctx context.Context, t gatherTick) {
+	if ctx.Err() != nil {
+		// The daemon is on its way down; Run may pick a ready tick over Done.
+		return
+	}
 	s := t.s
 	s.mu.Lock()
 	if t.gen != s.gatherGen || len(s.gather) == 0 {

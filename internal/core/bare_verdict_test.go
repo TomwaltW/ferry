@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TomwaltW/ferry/internal/control"
 	"github.com/TomwaltW/ferry/internal/fsp"
 	"github.com/TomwaltW/ferry/internal/ports"
 )
@@ -101,6 +102,9 @@ func TestBareVerdictAsksForTheID(t *testing.T) {
 			if !strings.Contains(hint.Text, fmt.Sprintf("N=%d", tc.n)) || !strings.Contains(hint.Text, "approval.need_id_item") {
 				t.Errorf("hint = %q, want %d approvals listed", hint.Text, tc.n)
 			}
+			if always := strings.Contains(hint.Text, "Why=approval.need_id_always"); always != (tc.word == "总是") {
+				t.Errorf("hint = %q: the always-allow note is there = %v, want it only for 总是", hint.Text, always)
+			}
 			if !hint.Urgent {
 				t.Error("the hint answers the approver's own message and must be urgent")
 			}
@@ -188,4 +192,53 @@ func TestSpokenVerdictOnlyRefuses(t *testing.T) {
 			t.Errorf("%d voice notices with nothing waiting, want none", n)
 		}
 	})
+}
+
+// A question the flush for this very message delivers was not on screen when
+// the message was written, however long the flush took.
+func TestBareVerdictTimesTheMessageBeforeTheFlush(t *testing.T) {
+	h := newHarness(t)
+	agent := h.newSession()
+	p := h.waiting("abcde")
+	p.ShownAt = h.clk.Now().Add(time.Second) // delivered by the flush below
+	h.approvals.setOpen(p)
+	h.outbox.mu.Lock()
+	h.outbox.onFlush = func() { h.clk.Advance(5 * time.Second) }
+	h.outbox.mu.Unlock()
+
+	h.owner("同意")
+	h.waitText("approval.need_id|")
+	if v := h.approvals.verdicts(); len(v) != 0 {
+		t.Errorf("verdicts = %+v, want none", v)
+	}
+	if n := len(agent.prompted()); n != 0 {
+		t.Errorf("the agent was prompted %d times, want none", n)
+	}
+}
+
+// Claude Code asks in its terminal too and never says when it was answered
+// there, so a bare word next to its approvals stays text for the session.
+func TestBareVerdictLeavesClaudeChannelApprovals(t *testing.T) {
+	h := newExternalHarness(t)
+	resp, stream := h.attach(control.AttachRequest{
+		Kind: control.KindChannel, Agent: "claude", Cwd: h.root, AllowInject: true, RemoteApprove: true,
+	})
+	id := fsp.SessionID(resp.SessionID)
+	if s := h.d.lookup(id); s == nil || s.snapshot().Driver != fsp.DriverClaudeChannel {
+		t.Fatalf("the attached session is not a Claude Code channel session")
+	}
+	shown := h.clk.Now().Add(-bareShown)
+	h.approvals.setOpen(ports.PendingApproval{ID: "abcde", Session: id, AskedAt: shown, ShownAt: shown})
+
+	h.sendTo(h.externalEP(), h.im, ownerID, "y")
+	m := stream.readOf(control.MsgPrompt)
+	if m.Text != "y" {
+		t.Errorf("prompt = %q, want the word as text", m.Text)
+	}
+	if v := h.approvals.verdicts(); len(v) != 0 {
+		t.Errorf("verdicts = %+v, want none", v)
+	}
+	if n := h.countText("approval.need_id"); n != 0 {
+		t.Errorf("%d hints, want none", n)
+	}
 }

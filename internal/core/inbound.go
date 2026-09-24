@@ -18,6 +18,9 @@ const defaultMaxMediaMB = 20
 // handleInbound runs the eleven steps of spec-p1 3.6 for one inbound message.
 func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 	ep := in.Endpoint
+	// When the message came in, before step 3 flushes anything: a question the
+	// flush delivers now was not on screen when the sender wrote this.
+	arrived := d.deps.Clock.Now()
 
 	// 1. Duplicates never reach anything else.
 	seen, err := d.deps.Store.SeenMessage(ctx, ep, in.MessageID, in.ReceivedAt)
@@ -59,7 +62,7 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 	// waiting here.
 	if id, decision, ok := d.deps.Approvals.ParseVerdict(in.Text); ok {
 		if id == "" {
-			if d.bareVerdict(ctx, in, decision) {
+			if d.bareVerdict(ctx, in, decision, arrived) {
 				return
 			}
 		} else {
@@ -108,6 +111,11 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 		d.reply(ctx, ep, "inject.disabled", nil)
 		return
 	}
+
+	// Text for a session that waits on the approver is held back until the
+	// approval is settled; say so once, or the approver may think they have
+	// answered.
+	d.nudgeAwaiting(ctx, in, s)
 
 	// 9. A transcription says so, for the agent to allow for homophones in
 	// names and identifiers. Anything not sent by the bot owner carries the
@@ -198,20 +206,20 @@ const (
 // decide or nothing is waiting at the endpoint. Otherwise the word never
 // reaches an agent: it answers the one approval waiting when that cannot be
 // mistaken, and the approver is asked to add the ID when it can.
-func (d *Daemon) bareVerdict(ctx context.Context, in fsp.Inbound, decision fsp.Decision) bool {
+func (d *Daemon) bareVerdict(ctx context.Context, in fsp.Inbound, decision fsp.Decision, arrived time.Time) bool {
 	ep := in.Endpoint
 	if !d.deps.ACL.IsApprover(ep, in.SenderID) {
 		return false
 	}
 	open := d.deps.Approvals.Pending(ctx, ep)
-	if len(open) == 0 {
+	if len(open) == 0 || d.maybeSettled(open) {
 		return false
 	}
 	if hasVoice(in.Attachments) && decision != fsp.DecisionReject {
 		d.reply(ctx, ep, "approval.voice_allow", nil)
 		return true
 	}
-	if d.bareAnswers(ctx, ep, open, decision) {
+	if d.bareAnswers(ctx, ep, open, decision, arrived) {
 		d.deps.Approvals.Resolve(ctx, open[0].ID, decision, in.SenderID)
 		return true
 	}
@@ -221,10 +229,57 @@ func (d *Daemon) bareVerdict(ctx context.Context, in fsp.Inbound, decision fsp.D
 			"ID": p.ID, "Slot": d.slotOf(ctx, ep, p.Session),
 		}))
 	}
+	id := open[len(open)-1].ID
+	why := ""
+	if decision == fsp.DecisionAllowAlways {
+		why = d.t(ctx, ep, "approval.need_id_always", map[string]any{"ID": id})
+	}
 	d.reply(ctx, ep, "approval.need_id", map[string]any{
-		"N": len(open), "ID": open[len(open)-1].ID, "List": strings.Join(lines, "\n"),
+		"N": len(open), "ID": id, "Why": why, "List": strings.Join(lines, "\n"),
 	})
 	return true
+}
+
+// maybeSettled reports whether every approval in open belongs to a Claude
+// Code channel session. Claude Code asks in its terminal as well and never
+// says when it was answered there, so such an approval may be long settled:
+// a bare word is left to be text, as it was before bare words counted.
+func (d *Daemon) maybeSettled(open []ports.PendingApproval) bool {
+	for _, p := range open {
+		s := d.lookup(p.Session)
+		if s == nil || s.snapshot().Driver != fsp.DriverClaudeChannel {
+			return false
+		}
+	}
+	return true
+}
+
+// nudgeAwaiting tells an approver whose foreground session waits on an
+// approval that their message is held back until it is settled, once per
+// approval. Without it a "好的" meant as an answer sits unanswered until the
+// approval times out.
+func (d *Daemon) nudgeAwaiting(ctx context.Context, in fsp.Inbound, s *session) {
+	ep := in.Endpoint
+	if s.State() != fsp.StateAwaiting || !d.deps.ACL.IsApprover(ep, in.SenderID) {
+		return
+	}
+	rec := s.snapshot()
+	if rec.Driver == fsp.DriverClaudeChannel {
+		return
+	}
+	for _, p := range d.deps.Approvals.Pending(ctx, ep) {
+		if p.Session != rec.ID || p.ShownAt.IsZero() {
+			continue
+		}
+		d.mu.Lock()
+		told := d.nudged[ep.String()] == p.ID
+		d.nudged[ep.String()] = p.ID
+		d.mu.Unlock()
+		if !told {
+			d.reply(ctx, ep, "approval.still_waiting", map[string]any{"ID": p.ID})
+		}
+		return
+	}
 }
 
 // bareAnswers reports whether a decision word without an ID can only mean the
@@ -232,15 +287,14 @@ func (d *Daemon) bareVerdict(ctx context.Context, in fsp.Inbound, decision fsp.D
 // shown long enough, with no other approval lapsed just before. "Always allow"
 // is never given without the ID: a lone "a" is too easily an answer to
 // something else, and it outlasts the approval.
-func (d *Daemon) bareAnswers(ctx context.Context, ep fsp.EndpointID, open []ports.PendingApproval, decision fsp.Decision) bool {
+func (d *Daemon) bareAnswers(ctx context.Context, ep fsp.EndpointID, open []ports.PendingApproval, decision fsp.Decision, arrived time.Time) bool {
 	if decision == fsp.DecisionAllowAlways || len(open) != 1 {
 		return false
 	}
-	now := d.deps.Clock.Now()
-	if open[0].ShownAt.IsZero() || now.Sub(open[0].ShownAt) < bareShown {
+	if open[0].ShownAt.IsZero() || arrived.Sub(open[0].ShownAt) < bareShown {
 		return false
 	}
-	if lapsed := d.deps.Approvals.Lapsed(ep); !lapsed.IsZero() && now.Sub(lapsed) < bareAfterLapse {
+	if lapsed := d.deps.Approvals.Lapsed(ep); !lapsed.IsZero() && arrived.Sub(lapsed) < bareAfterLapse {
 		return false
 	}
 	fg := d.foreground(ctx, ep)

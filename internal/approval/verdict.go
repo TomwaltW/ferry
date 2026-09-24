@@ -47,16 +47,30 @@ var verdictWords = map[string]fsp.Decision{
 // not among them, because a question is not a decision.
 const closingMarks = "。．.！!～~"
 
+// notBare are decision words that need their ID: a lone "a" is what a pinyin
+// keyboard sends for 啊, and "always" outlasts the approval it answers.
+var notBare = map[string]bool{"a": true, "always": true}
+
 // ParseVerdict identifies a decision sent as a whole message: a decision word
-// and an ID ("y abcde", "同意 abcde", "同意abcde"), or the word alone ("同意"),
-// which reports an empty ID and leaves the core to decide whether it may stand
-// for the one approval waiting.
+// and an ID ("y abcde", "同意 abcde", "同意abcde", "同意，abcde"), or the word
+// alone ("同意"), which reports an empty ID and leaves the core to decide
+// whether it may stand for the one approval waiting.
 func (m *manager) ParseVerdict(text string) (string, fsp.Decision, bool) {
+	text = strings.Map(func(r rune) rune {
+		if strings.ContainsRune("，,：:", r) {
+			return ' '
+		}
+		return r
+	}, text)
 	text = strings.TrimSpace(strings.TrimRight(strings.TrimSpace(text), closingMarks))
 	fields := strings.Fields(text)
 	switch len(fields) {
 	case 1:
-		if d, ok := verdictWords[strings.ToLower(fields[0])]; ok {
+		word := strings.ToLower(fields[0])
+		if d, ok := verdictWords[word]; ok {
+			if notBare[word] {
+				return "", "", false
+			}
 			return "", d, true
 		}
 		return gluedVerdict(fields[0])

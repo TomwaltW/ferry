@@ -124,6 +124,7 @@ type fakeOutbox struct {
 	pulls    []fsp.EndpointID
 	files    []int
 	blockRun chan struct{}
+	onFlush  func() // runs inside FlushHeld, standing in for a slow flush
 }
 
 func (f *fakeOutbox) OpenWindow(ep fsp.EndpointID, replyCtx string, inboundAt time.Time) {
@@ -143,6 +144,9 @@ func (f *fakeOutbox) FlushHeld(ctx context.Context, ep fsp.EndpointID) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.flushed = append(f.flushed, ep)
+	if f.onFlush != nil {
+		f.onFlush()
+	}
 	return nil
 }
 
@@ -284,8 +288,8 @@ func (f *fakeApprovals) Ask(ctx context.Context, req fsp.ApprovalRequest) (fsp.V
 // bareWords are the decision words the fake accepts without an ID.
 var bareWords = map[string]fsp.Decision{
 	"y": fsp.DecisionAllowOnce, "同意": fsp.DecisionAllowOnce,
-	"a": fsp.DecisionAllowAlways, "总是": fsp.DecisionAllowAlways,
-	"n": fsp.DecisionReject, "拒绝": fsp.DecisionReject,
+	"总是": fsp.DecisionAllowAlways,
+	"n":  fsp.DecisionReject, "拒绝": fsp.DecisionReject,
 }
 
 func (f *fakeApprovals) ParseVerdict(text string) (string, fsp.Decision, bool) {

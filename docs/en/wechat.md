@@ -92,7 +92,8 @@ a abcde
 
 The Chinese words work the same way, with or without a space before the code:
 `同意 abcde` (or 允许) allows once, `拒绝 abcde` (or 不同意, 不允许) refuses, and
-`总是 abcde` (or 总是允许, 始终允许) always allows. A trailing full stop is fine.
+`总是 abcde` (or 总是允许, 始终允许) always allows. A comma or colon between the
+word and the code, and a trailing full stop, are fine.
 
 While it is the only approval waiting, `y`, `n`, `同意` or `拒绝` on its own
 answers it. Ferry takes a word without a code only when it cannot be mistaken:
@@ -100,7 +101,14 @@ the approval belongs to the session in the foreground, its question was
 delivered at least three seconds ago, and no other approval in this chat timed
 out or was cancelled in the last minute. Otherwise you are asked to add the
 code, and the word goes nowhere else. With no approval waiting, the same word is
-ordinary text for the agent. "Always allow" always needs the code.
+ordinary text for the agent. "Always allow" always needs the code. So do the
+approvals of a Claude Code channel session: Claude Code asks in its terminal as
+well, and a request answered there stays open in chat until it times out, so a
+bare word next to one is ordinary text for the session.
+
+Anything else you send while the session waits on an approval is held back
+until the approval is settled. The first such message gets a note saying so,
+so that an answer like 好的 is not mistaken for a decision.
 
 A voice message can refuse an approval but never allow one: WeChat's
 transcription can drop the 不 of 不同意. Type your answer to allow.
