@@ -52,6 +52,8 @@
 "usage.new" = "Usage: /new [agent] [dir], for example /new kimi ~/code/demo; a bare /new starts the default agent"
 "usage.mode" = "Usage: /mode <key> <value>, for example /mode mode plan"
 "usage.lang" = "Usage: /lang zh or /lang en"
+"usage.close" = "Usage: /close [number], for example /close 2; without a number it closes the current session"
+"usage.file" = "Usage: /file [number], for example /file 1; without a number it resends the most recent one"
 "usage.pair" = "Usage: /pair <6-digit code>"
 "outbox.truncated" = "…({{.N}} more characters not sent)"
 "help.text" = "Commands:\n/ls list sessions\n/new [agent] [dir] start a session, the default agent when none is named\n/use <number> switch session\n/agents list agents and availability\n/stop stop the current turn\n/close [number] close a session\n/mode <key> <value> set a session option\n/lang zh or /lang en switch language\n/pair <code> confirm pairing (approvers only)\n/pull fetch messages held while the reply window was shut\n/file [number] resend long output n as a file\n/help this text\nApprovals: reply y <ID> to allow once, a <ID> to always allow, n <ID> to reject; y or n alone answers the only approval waiting; a spoken reply can only reject\nA message starting with // is handled as ordinary text"

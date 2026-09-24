@@ -470,7 +470,7 @@ func TestPullAndFileCommands(t *testing.T) {
 	}
 
 	h.owner("/file zero")
-	h.waitText("usage.use|")
+	h.waitText("usage.file|")
 	if n := len(h.outbox.fileCalls()); n != 2 {
 		t.Errorf("File was called %d times, want the nonsense argument turned away", n)
 	}

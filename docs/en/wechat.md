@@ -28,9 +28,9 @@ one slash and treated as text.
 | --- | --- | --- |
 | `/ls` | 会话 | List this chat's sessions; `▶` marks the current one |
 | `/new [agent] [dir]` | 新建 | Start a session; the agent defaults to `default_agent` and the directory to your first workspace root |
-| `/use <n>` | 切换 | Switch to session n, resuming it if it was parked |
+| `/use <n>` | 切换, 切换到 | Switch to session n, resuming it if it was parked |
 | `/agents` | | List configured agents and whether they can run |
-| `/stop` | 停 | Cancel the current turn |
+| `/stop` | 停, 停止 | Cancel the current turn |
 | `/close [n]` | 关闭 | Close a session |
 | `/mode <key> <value>` | | Set a session option, such as the agent's mode |
 | `/lang <zh or en>` | 语言 | Switch the bot's language for this chat |
@@ -43,10 +43,16 @@ one slash and treated as text.
 number resends the most recent one.
 
 Chinese keyboards are taken as they type. Desktop WeChat with a pinyin input
-method turns the `/` key into `、`, and full-width mode gives `／`; either one in
-front of a command word counts as `/`, so `、ls` is `/ls`. The number of `/use`,
-`/close`, `/file` and `/pair` may follow the word without a space, as in `切换2`
-or `关闭2`, and full-width digits such as `２` read as `2`.
+method turns the `/` key into `、`, which counts as `/` in front of a command
+word, so `、ls` is `/ls`; full-width characters such as `／ｌｓ` or `２` read as
+their ASCII selves. The number of `/use`, `/close`, `/file` and `/pair` may
+follow the word without a space, as in `切换2` or `关闭2`, and a one-word command
+may end in a full stop, the way voice input writes it (`停。`).
+
+切换, 关闭, 文件, 语言 and 配对 are everyday words, so they make a command only
+when the rest of the message is exactly what the command takes: `切换 2`,
+`关闭`, `文件 3`, `语言 英文`, `配对 123456`. A message such as
+`文件 main.go 里有个 bug` or `关闭 2 个测试` goes to the agent as text.
 
 ## Messages in pieces
 

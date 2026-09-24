@@ -319,7 +319,7 @@ func (d *Daemon) cmdClose(ctx context.Context, ep fsp.EndpointID, args []string)
 	if len(args) != 0 {
 		n, err := strconv.Atoi(strings.TrimSpace(args[0]))
 		if err != nil || n <= 0 {
-			d.reply(ctx, ep, "usage.use", nil)
+			d.reply(ctx, ep, "usage.close", nil)
 			return
 		}
 		slot, s = n, d.bySlot(ctx, ep, n)
@@ -436,7 +436,7 @@ func (d *Daemon) cmdFile(ctx context.Context, ep fsp.EndpointID, args []string) 
 	if len(args) != 0 {
 		parsed, err := strconv.Atoi(strings.TrimSpace(args[0]))
 		if err != nil || parsed <= 0 {
-			d.reply(ctx, ep, "usage.use", nil)
+			d.reply(ctx, ep, "usage.file", nil)
 			return
 		}
 		n = parsed
@@ -510,7 +510,7 @@ func (d *Daemon) cmdLang(ctx context.Context, ep fsp.EndpointID, args []string) 
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
 	case "zh", "zh-cn", "zh-hans", "cn", "中文":
 		lang = fsp.LangZH
-	case "en", "en-us", "english":
+	case "en", "en-us", "english", "英文", "英语":
 		lang = fsp.LangEN
 	default:
 		d.reply(ctx, ep, "usage.lang", nil)

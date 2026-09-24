@@ -776,3 +776,28 @@ func TestBareNewWithoutDefaultAgent(t *testing.T) {
 		t.Errorf("%d agents started, want none", n)
 	}
 }
+
+// Each command answers a bad number with its own usage line.
+func TestCloseAndFileUsage(t *testing.T) {
+	h := newHarness(t)
+	h.newSession()
+	h.owner("/close x")
+	h.waitText("usage.close|")
+	h.owner("/file x")
+	h.waitText("usage.file|")
+	if n := h.countText("usage.use|"); n != 0 {
+		t.Errorf("%d /use usage lines, want none", n)
+	}
+}
+
+func TestLangTakesChineseNames(t *testing.T) {
+	h := newHarness(t)
+	for _, word := range []string{"英文", "英语"} {
+		h.owner("/lang " + word)
+		h.waitFor("the switch to English", func() bool {
+			lang, _ := h.store.GetKV(context.Background(), langKey(h.ep))
+			return lang == string(fsp.LangEN)
+		})
+		mustNil(t, h.store.SetKV(context.Background(), langKey(h.ep), string(fsp.LangZH)))
+	}
+}
