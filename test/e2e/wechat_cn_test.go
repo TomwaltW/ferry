@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -61,12 +60,9 @@ func TestGatheredPieces(t *testing.T) {
 	r.send("echo 帮我改一下")
 	r.send("outbox 的重试")
 	r.waitOwnerTextFrom(mark, "帮我改一下\noutbox 的重试")
+	// The receipt and the echo are separate outbox rows; on a slow runner the
+	// echo can be on screen before the receipt, so wait for it too.
 	receipt := r.tr("turn.accepted", map[string]any{"Agent": agentName, "Slot": 1})
-	n := 0
-	for _, msg := range r.sentTo(ownerID)[mark:] {
-		n += strings.Count(msg, receipt)
-	}
-	if n != 1 {
-		t.Errorf("%d receipts for one message sent in two pieces, want 1", n)
-	}
+	r.waitOwnerTextFrom(mark, receipt)
+	r.refuteFrom(ownerID, r.indexOf(mark, receipt)+1, receipt, "one message sent in two pieces gets one receipt")
 }

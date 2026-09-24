@@ -12,11 +12,13 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/TomwaltW/ferry/internal/config"
 	"github.com/TomwaltW/ferry/internal/fsp"
 	"github.com/TomwaltW/ferry/internal/im/feishu"
 	"github.com/TomwaltW/ferry/internal/im/feishu/feishutest"
+	"github.com/TomwaltW/ferry/internal/ports"
 )
 
 // --- multi-user isolation -------------------------------------------------
@@ -177,6 +179,20 @@ func TestAuditExport(t *testing.T) {
 	mark := r.markOwner()
 	r.send(body)
 	r.waitOwnerTextFrom(mark, "audit-7f3c")
+	// The inbound row is written once the turn has started, which can be just
+	// after the echo is on screen.
+	audit, ok := r.store.(interface {
+		AuditSince(context.Context, time.Time) ([]ports.AuditEntry, error)
+	})
+	if !ok {
+		t.Fatal("the rig's store cannot list the audit log")
+	}
+	r.waitFor("the inbound audit row", func() bool {
+		entries, err := audit.AuditSince(context.Background(), time.Now().Add(-time.Hour))
+		return err == nil && slices.ContainsFunc(entries, func(e ports.AuditEntry) bool {
+			return e.Kind == "inbound" && e.Detail == "len=15"
+		})
+	})
 
 	stdout, stderr, code := r.runFerry("audit", "export", "--since", "1h")
 	if code != 0 {
