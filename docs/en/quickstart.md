@@ -66,11 +66,15 @@ a gate.
 ferry login wechat
 ```
 
-A QR code appears in the terminal. Scan it with the WeChat account that should
-*be* the bot — most people use a second account for this, and talk to it from
-their main one. The account that scans becomes the owner: the only one allowed
-to use the bot until it pairs someone else, and the one asked to approve tool
-calls.
+A QR code appears in the terminal. Scan it with the WeChat account you will
+chat from, usually your main one. The account that scans becomes the owner: the
+only one allowed to use the bot until it pairs someone else, and the one asked
+to approve tool calls. The bot is not a second WeChat account: the login gives
+it an ID of its own, and `ferry login wechat` prints both IDs when it succeeds.
+
+Do not scan with a spare account and chat from your main one. The spare account
+would become the owner, and to the bot your main account would be a stranger
+that only ever gets a pairing code.
 
 Credentials go into the system keyring when there is one, and into
 `$FERRY_HOME/credentials/` with mode 0600 when there is not. `ferry logout

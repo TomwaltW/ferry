@@ -9,12 +9,14 @@ of a session actually looks like.
 
 `ferry login wechat` fetches a QR code and prints it in the terminal. The code
 refreshes itself up to three times while you take your phone out. Scan it with
-the account that should be the bot, not with the account you will chat from.
+the account you will chat from. The bot is not a WeChat account of its own, so
+there is no second account to scan with.
 
 What a confirmed login returns is a bot token, a bot ID and the ID of whoever
-scanned. That last one becomes the owner. If the platform later invalidates the
-session, the daemon marks WeChat offline, keeps running, and retries once a
-minute; `ferry login wechat` puts it back.
+scanned. That last one becomes the owner, and the login prints both IDs when it
+succeeds. If the platform later invalidates the session, the daemon marks
+WeChat offline, keeps running, and retries once a minute; `ferry login wechat`
+puts it back.
 
 ## Commands
 

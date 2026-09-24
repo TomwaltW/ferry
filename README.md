@@ -81,9 +81,9 @@ ferry daemon
 ```
 
 `ferry init` asks for your language, the directories agents may work in, and a
-default agent. `ferry login wechat` prints a QR code — scan it with the account
-that should *be* the bot, from a second account you will chat from. Then message
-that bot `/new kimi ~/code/demo`, send it a task, and answer any approval with
+default agent. `ferry login wechat` prints a QR code — scan it with the WeChat
+account you will chat from, which becomes the bot's owner. Then message the bot
+`/new kimi ~/code/demo`, send it a task, and answer any approval with
 `y <code>`. The full walkthrough is in
 [docs/en/quickstart.md](docs/en/quickstart.md), and the chat side is documented
 in [docs/en/wechat.md](docs/en/wechat.md).
