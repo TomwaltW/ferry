@@ -44,15 +44,18 @@ number resends the most recent one.
 
 Chinese keyboards are taken as they type. Desktop WeChat with a pinyin input
 method turns the `/` key into `、`, which counts as `/` in front of a command
-word, so `、ls` is `/ls`; full-width characters such as `／ｌｓ` or `２` read as
-their ASCII selves. The number of `/use`, `/close`, `/file` and `/pair` may
-follow the word without a space, as in `切换2` or `关闭2`, and a one-word command
-may end in a full stop, the way voice input writes it (`停。`).
+word, so `、ls` is `/ls`. Full-width characters in the command word, its
+number, a language or `force` read as their ASCII selves, as in `／ｌｓ` or
+`切换 ２`; paths and `/mode` values stay as typed. The number of `/use`,
+`/close`, `/file` and `/pair` may follow the word without a space, as in `切换2`
+or `关闭2`, and a one-word command may end in a full stop, the way voice input
+writes it (`停。`).
 
-切换, 关闭, 文件, 语言 and 配对 are everyday words, so they make a command only
-when the rest of the message is exactly what the command takes: `切换 2`,
-`关闭`, `文件 3`, `语言 英文`, `配对 123456`. A message such as
-`文件 main.go 里有个 bug` or `关闭 2 个测试` goes to the agent as text.
+停止, 切换, 关闭, 文件, 语言 and 配对 are everyday words, so they make a command
+only when the rest of the message is exactly what the command takes: `停止`,
+`切换 2`, `关闭`, `文件 3`, `语言 英文`, `配对 123456`. A message such as
+`文件 main.go 里有个 bug`, `关闭 2 个测试` or `停止 docker 容器` goes to the agent
+as text.
 
 ## Messages in pieces
 
@@ -107,8 +110,9 @@ well, and a request answered there stays open in chat until it times out, so a
 bare word next to one is ordinary text for the session.
 
 Anything else you send while the session waits on an approval is held back
-until the approval is settled. The first such message gets a note saying so,
-so that an answer like 好的 is not mistaken for a decision.
+until the turn ends, like any message to a busy session. The first such message
+gets a note that the approval is still open, so that an answer like 好的 is not
+mistaken for a decision.
 
 A voice message can refuse an approval but never allow one: WeChat's
 transcription can drop the 不 of 不同意. Type your answer to allow.

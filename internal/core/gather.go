@@ -50,6 +50,13 @@ func (d *Daemon) gather(ctx context.Context, s *session, frag fragment) bool {
 	now := d.deps.Clock.Now()
 	s.mu.Lock()
 	if s.as == nil || s.busyLocked() {
+		// An external session can turn busy mid-gather, when its editor or
+		// terminal raises an approval. This piece then queues, and so must the
+		// ones gathered before it, ahead of it.
+		if len(s.gather) != 0 {
+			s.pending = append(s.pending, joinFragments(s.gather))
+			s.dropGatherLocked()
+		}
 		s.mu.Unlock()
 		return false
 	}
@@ -117,15 +124,13 @@ func (d *Daemon) fireGather(ctx context.Context, t gatherTick) {
 // typing says the indicator is on already, as it is after a gather. It
 // reports whether the turn started.
 func (d *Daemon) startTurn(ctx context.Context, s *session, frags []fragment, typing bool) bool {
-	prompts := make([]string, 0, len(frags))
 	var heard []string
 	for _, f := range frags {
-		prompts = append(prompts, f.prompt)
 		if f.heard != "" {
 			heard = append(heard, f.heard)
 		}
 	}
-	if !s.submit(ctx, strings.Join(prompts, "\n")) {
+	if !s.submit(ctx, joinFragments(frags)) {
 		return false
 	}
 	ep := frags[len(frags)-1].ep
@@ -146,4 +151,13 @@ func (d *Daemon) startTurn(ctx context.Context, s *session, frags []fragment, ty
 		d.typing(ctx, ep, true)
 	}
 	return true
+}
+
+// joinFragments is the prompt the pieces of one message make together.
+func joinFragments(frags []fragment) string {
+	prompts := make([]string, 0, len(frags))
+	for _, f := range frags {
+		prompts = append(prompts, f.prompt)
+	}
+	return strings.Join(prompts, "\n")
 }

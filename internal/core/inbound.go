@@ -18,9 +18,15 @@ const defaultMaxMediaMB = 20
 // handleInbound runs the eleven steps of spec-p1 3.6 for one inbound message.
 func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 	ep := in.Endpoint
-	// When the message came in, before step 3 flushes anything: a question the
-	// flush delivers now was not on screen when the sender wrote this.
+	// When the message was written, as far as can be told: the earlier of now,
+	// before step 3 flushes anything, and the platform's own send time. A
+	// question delivered after that was not on screen when the sender wrote
+	// this, however long the message waited to be handled. The platform clock
+	// only ever makes the check stricter.
 	arrived := d.deps.Clock.Now()
+	if !in.ReceivedAt.IsZero() && in.ReceivedAt.Before(arrived) {
+		arrived = in.ReceivedAt
+	}
 
 	// 1. Duplicates never reach anything else.
 	seen, err := d.deps.Store.SeenMessage(ctx, ep, in.MessageID, in.ReceivedAt)
@@ -113,8 +119,7 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 	}
 
 	// Text for a session that waits on the approver is held back until the
-	// approval is settled; say so once, or the approver may think they have
-	// answered.
+	// turn ends; say so once, or the approver may think they have answered.
 	d.nudgeAwaiting(ctx, in, s)
 
 	// 9. A transcription says so, for the agent to allow for homophones in
@@ -255,8 +260,8 @@ func (d *Daemon) maybeSettled(open []ports.PendingApproval) bool {
 }
 
 // nudgeAwaiting tells an approver whose foreground session waits on an
-// approval that their message is held back until it is settled, once per
-// approval. Without it a "好的" meant as an answer sits unanswered until the
+// approval that the approval is still open and their message is held back
+// until the turn ends, once per approval. Without it a "好的" meant as an answer sits unanswered until the
 // approval times out.
 func (d *Daemon) nudgeAwaiting(ctx context.Context, in fsp.Inbound, s *session) {
 	ep := in.Endpoint

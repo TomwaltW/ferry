@@ -242,3 +242,25 @@ func TestBareVerdictLeavesClaudeChannelApprovals(t *testing.T) {
 		t.Errorf("%d hints, want none", n)
 	}
 }
+
+// The platform's send time counts too: a word written before the question
+// was delivered does not answer it, however late the daemon gets to it.
+func TestBareVerdictTimesTheMessageFromItsSendTime(t *testing.T) {
+	h := newHarness(t)
+	h.newSession()
+	p := h.waiting("abcde")
+	h.approvals.setOpen(p)
+
+	select {
+	case h.im.channel() <- fsp.Inbound{
+		Endpoint: h.ep, SenderID: ownerID, MessageID: "late", Text: "y",
+		ReplyCtx: "ctx", ReceivedAt: p.ShownAt.Add(-time.Second),
+	}:
+	case <-time.After(3 * time.Second):
+		t.Fatal("inbound channel blocked")
+	}
+	h.waitText("approval.need_id|")
+	if v := h.approvals.verdicts(); len(v) != 0 {
+		t.Errorf("verdicts = %+v, want none", v)
+	}
+}

@@ -168,13 +168,17 @@ func (m *manager) auto(ctx context.Context, req fsp.ApprovalRequest, d fsp.Decis
 
 // askOwner registers the approval, sends the question and waits.
 func (m *manager) askOwner(ctx context.Context, req fsp.ApprovalRequest) (fsp.Verdict, error) {
-	owner, err := m.sessionOwner(ctx, req.Session)
+	rec, err := m.store.GetSession(ctx, req.Session)
 	if err != nil {
 		// With nobody to ask, refusing is the only safe answer.
 		m.log.Error("approval: no owner to ask", "session", req.Session, "error", err)
 		id, _, _ := firstOption(req.Options, fsp.OptRejectOnce, fsp.OptRejectAlways)
 		return m.auto(ctx, req, fsp.DecisionReject, id), nil
 	}
+	owner := rec.Owner
+	// Claude Code asks in its terminal too, so the core never lets a word
+	// without the ID answer its approvals; the question must not offer one.
+	bare := rec.Driver != fsp.DriverClaudeChannel
 
 	// The key is the one part of the message that reaches the adapter as it
 	// was sent, so it carries the approval to entry points with buttons
@@ -192,7 +196,7 @@ func (m *manager) askOwner(ctx context.Context, req fsp.ApprovalRequest) (fsp.Ve
 		Endpoint:  owner,
 		Session:   req.Session,
 		Kind:      fsp.OutApproval,
-		Text:      m.requestText(req),
+		Text:      m.requestText(req, bare),
 		Urgent:    true,
 		DedupeKey: key,
 	})
@@ -226,11 +230,16 @@ func (m *manager) askOwner(ctx context.Context, req fsp.ApprovalRequest) (fsp.Ve
 
 // requestText renders the approval question. The description and the preview
 // are shortened and the preview is also masked, because it is the field that
-// carries whatever the agent was about to run.
-func (m *manager) requestText(req fsp.ApprovalRequest) string {
+// carries whatever the agent was about to run. bare adds that a word without
+// the ID will do while this is the only approval waiting.
+func (m *manager) requestText(req fsp.ApprovalRequest, bare bool) string {
 	hint := ""
 	if _, _, ok := firstOption(req.Options, fsp.OptAllowAlways); ok {
 		hint = m.t("approval.always_hint", map[string]any{"ID": req.ID})
+	}
+	bareHint := ""
+	if bare {
+		bareHint = m.t("approval.bare_hint", nil)
 	}
 	return m.t("approval.request", map[string]any{
 		"ID":          req.ID,
@@ -238,6 +247,7 @@ func (m *manager) requestText(req fsp.ApprovalRequest) string {
 		"Description": security.SanitizeForIM(req.Description, descriptionBudget),
 		"Preview":     security.MaskSecrets(security.SanitizeForIM(req.InputPreview, previewBudget)),
 		"AlwaysHint":  hint,
+		"BareHint":    bareHint,
 	})
 }
 

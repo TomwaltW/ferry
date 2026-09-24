@@ -38,6 +38,12 @@ func TestChineseKeyboard(t *testing.T) {
 		{"语言", ports.Command{Name: "lang"}},
 		{"停止", ports.Command{Name: "stop"}},
 
+		// Full-width words the core compares with ASCII ones.
+		{"语言 ｅｎ", ports.Command{Name: "lang", Args: []string{"en"}}},
+		{"／ｌａｎｇ　ｅｎ", ports.Command{Name: "lang", Args: []string{"en"}}},
+		{"切换 ２ ｆｏｒｃｅ", ports.Command{Name: "use", Args: []string{"2", "force"}}},
+		{"／ｕｓｅ ２ ｆｏｒｃｅ", ports.Command{Name: "use", Args: []string{"2", "force"}}},
+
 		// A number glued to the command word.
 		{"切换2", ports.Command{Name: "use", Args: []string{"2"}}},
 		{"切换12 force", ports.Command{Name: "use", Args: []string{"12", "force"}}},
@@ -113,6 +119,8 @@ func TestChineseKeyboardLeavesTextAlone(t *testing.T) {
 		"配对 蓝牙耳机",
 		"切换",
 		"配对",
+		"停止 docker 容器",
+		"停止 nginx 服务，然后把端口改成 8080",
 	}
 	p := New()
 	for _, text := range notCommands {

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -255,5 +256,31 @@ func TestGatherWaitsLongerAfterAPicture(t *testing.T) {
 	h.waitFor("the prompt", func() bool { return len(agent.prompted()) == 1 })
 	if got, want := agent.prompted()[0], "prompt.attachment|zh-CN Path=/tmp/err.png\n这个报错怎么办"; got != want {
 		t.Errorf("prompt = %q, want %q", got, want)
+	}
+}
+
+// A session can turn busy while pieces wait, when an external editor or
+// terminal raises an approval. The next piece then queues behind them.
+func TestGatherKeepsOrderWhenTheSessionTurnsBusy(t *testing.T) {
+	h := newTestbed(t)
+	h.deps.Config.Input.Gather = config.Duration{Duration: testGather}
+	release := make(chan struct{})
+	h.approvals.release = release
+	h.start()
+	agent := h.newSession()
+
+	h.piece("one")
+	go agent.approver.Ask(context.Background(), fsp.ApprovalRequest{ID: "abcde", ToolName: "shell"})
+	h.waitFor("the session to wait on the approval", func() bool { return h.sessionState() == fsp.StateAwaiting })
+	h.piece("two")
+	close(release)
+	h.waitFor("the session to run again", func() bool { return h.sessionState() == fsp.StateRunning })
+	h.clk.Advance(testGather)
+	h.settle()
+
+	agent.emit(fsp.Event{Kind: fsp.EvTurnEnd, StopReason: "end_turn"})
+	h.waitFor("the queued text", func() bool { return len(agent.prompted()) == 1 })
+	if got, want := agent.prompted()[0], "one\n\ntwo"; got != want {
+		t.Errorf("prompt = %q, want %q: the gathered piece first", got, want)
 	}
 }

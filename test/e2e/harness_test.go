@@ -445,18 +445,18 @@ func (r *rig) newSession() {
 }
 
 // approvalID matches the ID inside the reply instructions of an approval
-// request ("如「同意 <id>」"). Matching the leading "审批 <id>" instead would
+// request ("回复「同意 <id>」"). Matching the leading "审批 <id>" instead would
 // also match approval.decided, which shares that prefix.
-var approvalID = regexp.MustCompile(`如「同意 ([a-km-z]{5})」`)
+var approvalID = regexp.MustCompile(`回复「同意 ([a-km-z]{5})」`)
 
 // approvalMark is the part of approval.request that no other message carries.
 // It is checked against the catalog so a wording change fails loudly here
 // rather than silently matching the wrong message.
 func (r *rig) approvalMark() string {
 	r.t.Helper()
-	const mark = "回复「拒绝」拒绝"
+	const mark = "预览可能包含敏感信息"
 	req := r.tr("approval.request", map[string]any{
-		"ID": "aaaaa", "Tool": "t", "Description": "d", "Preview": "p", "AlwaysHint": "",
+		"ID": "aaaaa", "Tool": "t", "Description": "d", "Preview": "p", "AlwaysHint": "", "BareHint": "",
 	})
 	if !strings.Contains(req, mark) {
 		r.t.Fatalf("approval.request no longer contains %q, update the e2e marker:\n%s", mark, req)
@@ -464,8 +464,10 @@ func (r *rig) approvalMark() string {
 	if decided := r.tr("approval.decided", map[string]any{"ID": "aaaaa", "Decision": "x"}); strings.Contains(decided, mark) {
 		r.t.Fatalf("approval.decided also contains %q, so it no longer tells the two apart", mark)
 	}
-	if hint := r.tr("approval.need_id", map[string]any{"N": 1, "ID": "aaaaa", "List": "l"}); strings.Contains(hint, mark) {
-		r.t.Fatalf("approval.need_id also contains %q, so it no longer tells the two apart", mark)
+	for _, key := range []string{"approval.need_id", "approval.still_waiting"} {
+		if other := r.tr(key, map[string]any{"N": 1, "ID": "aaaaa", "List": "l", "Why": ""}); strings.Contains(other, mark) {
+			r.t.Fatalf("%s also contains %q, so it no longer tells the two apart", key, mark)
+		}
 	}
 	return mark
 }

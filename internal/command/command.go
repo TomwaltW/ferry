@@ -19,7 +19,6 @@ var heads = map[string]string{
 	"/agents": "agents",
 	"/stop":   "stop",
 	"停":       "stop",
-	"停止":      "stop",
 	"/close":  "close",
 	"/mode":   "mode",
 	"/pull":   "pull",
@@ -36,6 +35,7 @@ var heads = map[string]string{
 // Chinese writers set English words off with spaces: "文件 main.go 里有个 bug"
 // and "关闭 2 个测试" are messages for the agent, not /file and /close 2.
 var strict = map[string]string{
+	"停止":  "stop",
 	"切换":  "use",
 	"切换到": "use",
 	"切到":  "use",
@@ -88,6 +88,14 @@ func (parser) Parse(text string) (ports.Command, bool) {
 			args[0] = foldWidth(n)
 		}
 	}
+	// The words the core compares with ASCII ones fold as the command word
+	// does; paths and /mode values stay as typed.
+	switch {
+	case name == "lang" && len(args) != 0:
+		args[0] = foldWidth(args[0])
+	case name == "use" && len(args) > 1:
+		args[1] = foldWidth(args[1])
+	}
 	if strictWord && !fits(name, args) {
 		return ports.Command{}, false
 	}
@@ -130,10 +138,12 @@ func lookup(head string) (string, []string, bool, bool) {
 }
 
 // fits reports whether the arguments after a strict word are exactly what its
-// command takes: 切换 <n> [force], 关闭 [<n>], 文件 [<n>], 配对 <code> and
-// 语言 [<language>].
+// command takes: 停止 alone, 切换 <n> [force], 关闭 [<n>], 文件 [<n>],
+// 配对 <code> and 语言 [<language>].
 func fits(name string, args []string) bool {
 	switch name {
+	case "stop":
+		return len(args) == 0
 	case "use":
 		return (len(args) == 1 || len(args) == 2 && strings.EqualFold(args[1], "force")) && allDigits(args[0])
 	case "close", "file":

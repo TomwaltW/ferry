@@ -2,11 +2,13 @@ package approval
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/TomwaltW/ferry/internal/config"
 	"github.com/TomwaltW/ferry/internal/fsp"
+	"github.com/TomwaltW/ferry/internal/i18n"
 )
 
 // TestParseVerdictChinese covers what a phone with a Chinese keyboard or voice
@@ -199,5 +201,40 @@ func mustOK(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The question leads with the ID, and offers the word alone only where the
+// core accepts it: never for a Claude Code channel session.
+func TestRequestOffersBareWordsWhereTheyCount(t *testing.T) {
+	h := newHarness(t, config.PolicyConfig{})
+	h.m.i18n = i18n.Default()
+	ctx := context.Background()
+	channel := fsp.SessionID("sess_claude")
+	mustOK(t, h.store.PutSession(ctx, fsp.Session{
+		ID: channel, Driver: fsp.DriverClaudeChannel, Agent: "claude", Cwd: h.root,
+		Origin: fsp.OriginManaged, State: fsp.StateRunning, Owner: owner,
+		CreatedAt: base, LastActive: base,
+	}))
+	hint := i18n.Default().T(fsp.LangZH, "approval.bare_hint", nil)
+
+	for _, tc := range []struct {
+		session fsp.SessionID
+		bare    bool
+	}{{session, true}, {channel, false}} {
+		req := request("execute")
+		req.Session = tc.session
+		result := h.ask(ctx, req)
+		msg := h.outbox.next(t)
+		id := h.pendingID(t)
+		if !strings.Contains(msg.Text, "回复「同意 "+id+"」允许一次") {
+			t.Errorf("%s: question = %q, want the ID in the instruction", tc.session, msg.Text)
+		}
+		if got := strings.Contains(msg.Text, hint); got != tc.bare {
+			t.Errorf("%s: question offers the bare word = %v, want %v", tc.session, got, tc.bare)
+		}
+		h.m.Resolve(ctx, id, fsp.DecisionReject, "userA")
+		waitVerdict(t, result)
+		h.outbox.next(t) // approval.decided
 	}
 }
