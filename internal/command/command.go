@@ -16,6 +16,7 @@ var heads = map[string]string{
 	"/new":    "new",
 	"新建":      "new",
 	"/use":    "use",
+	"切换":      "use",
 	"/agents": "agents",
 	"/stop":   "stop",
 	"停":       "stop",
@@ -25,11 +26,23 @@ var heads = map[string]string{
 	"/pull":   "pull",
 	"收件":      "pull",
 	"/file":   "file",
+	"文件":      "file",
 	"/lang":   "lang",
+	"语言":      "lang",
 	"/help":   "help",
 	"帮助":      "help",
 	"/pair":   "pair",
+	"配对":      "pair",
 }
+
+// numbered are the commands whose first argument is a number. The number may
+// be glued to the command word ("切换2", "/use2"), which is how a Chinese
+// keyboard types it, and full-width digits in it are read as ASCII.
+var numbered = map[string]bool{"use": true, "close": true, "file": true, "pair": true}
+
+// slashes are what a Chinese keyboard types for "/": desktop WeChat with a
+// pinyin input method turns the key into "、", and full-width mode gives "／".
+var slashes = []string{"、", "／"}
 
 // New returns the parser for the chat command set.
 func New() ports.Commands { return parser{} }
@@ -48,15 +61,62 @@ func (parser) Parse(text string) (ports.Command, bool) {
 	if strings.HasPrefix(head, "//") {
 		return ports.Command{}, false
 	}
-	name, ok := heads[strings.ToLower(head)]
+	name, args, ok := lookup(head)
 	if !ok {
 		return ports.Command{}, false
 	}
-	cmd := ports.Command{Name: name}
-	if len(fields) > 1 {
-		cmd.Args = fields[1:]
+	args = append(args, fields[1:]...)
+	if len(args) == 0 {
+		return ports.Command{Name: name}, true
 	}
-	return cmd, true
+	if numbered[name] {
+		args[0] = asciiDigits(args[0])
+	}
+	return ports.Command{Name: name, Args: args}, true
+}
+
+// lookup names the command a first word stands for, with the number that was
+// glued to it, if any. A leading "、" or "／" counts as "/", and nothing else
+// about the word is loosened: "、ls" is /ls, "、好的" is still text.
+func lookup(head string) (string, []string, bool) {
+	for _, slash := range slashes {
+		if rest, ok := strings.CutPrefix(head, slash); ok {
+			head = "/" + rest
+			break
+		}
+	}
+	head = strings.ToLower(head)
+	if name, ok := heads[head]; ok {
+		return name, nil, true
+	}
+	word := strings.TrimRightFunc(head, isDigit)
+	if word == head {
+		return "", nil, false
+	}
+	name, ok := heads[word]
+	if !ok || !numbered[name] {
+		return "", nil, false
+	}
+	return name, []string{head[len(word):]}, true
+}
+
+// isDigit reports an ASCII or a full-width decimal digit.
+func isDigit(r rune) bool {
+	return ('0' <= r && r <= '9') || ('０' <= r && r <= '９')
+}
+
+// asciiDigits rewrites a word made only of digits with ASCII digits, so that
+// "２" reaches the core as "2". Any other word is returned as it is.
+func asciiDigits(word string) string {
+	if word == "" || strings.IndexFunc(word, func(r rune) bool { return !isDigit(r) }) >= 0 {
+		return word
+	}
+	return strings.Map(func(r rune) rune {
+		if '０' <= r && r <= '９' {
+			return '0' + (r - '０')
+		}
+		return r
+	}, word)
 }
 
 // Unescape strips one leading slash from a message that starts with "//" so

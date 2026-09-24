@@ -27,20 +27,26 @@ one slash and treated as text.
 | Command | Alias | What it does |
 | --- | --- | --- |
 | `/ls` | 会话 | List this chat's sessions; `▶` marks the current one |
-| `/new <agent> [dir]` | 新建 | Start a session; the directory defaults to your first workspace root |
-| `/use <n>` | | Switch to session n, resuming it if it was parked |
+| `/new [agent] [dir]` | 新建 | Start a session; the agent defaults to `default_agent` and the directory to your first workspace root |
+| `/use <n>` | 切换 | Switch to session n, resuming it if it was parked |
 | `/agents` | | List configured agents and whether they can run |
 | `/stop` | 停 | Cancel the current turn |
 | `/close [n]` | 关闭 | Close a session |
 | `/mode <key> <value>` | | Set a session option, such as the agent's mode |
-| `/lang <zh or en>` | | Switch the bot's language for this chat |
-| `/pair <code>` | | Confirm a pairing code (approvers only) |
+| `/lang <zh or en>` | 语言 | Switch the bot's language for this chat |
+| `/pair <code>` | 配对 | Confirm a pairing code (approvers only) |
 | `/pull` | 收件 | Send the next batch of messages held while the window was shut |
-| `/file <n>` | | Resend long output n as a file |
+| `/file [n]` | 文件 | Resend long output n as a file |
 | `/help` | 帮助 | The command list |
 
 `/pull` answers `Nothing is held back` once the backlog is empty. `/file` without a
 number resends the most recent one.
+
+Chinese keyboards are taken as they type. Desktop WeChat with a pinyin input
+method turns the `/` key into `、`, and full-width mode gives `／`; either one in
+front of a command word counts as `/`, so `、ls` is `/ls`. The number of `/use`,
+`/close`, `/file` and `/pair` may follow the word without a space, as in `切换2`
+or `关闭2`, and full-width digits such as `２` read as `2`.
 
 ## Approvals
 

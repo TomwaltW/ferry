@@ -144,13 +144,17 @@ func (d *Daemon) startSession(ctx context.Context, ep fsp.EndpointID, agent, cwd
 }
 
 // cmdNew starts a session in a directory the sender may work in: the one
-// given, or else the first of the sender's roots.
+// given, or else the first of the sender's roots. A bare /new starts the
+// default agent there, so a phone never has to type an agent name or a path.
 func (d *Daemon) cmdNew(ctx context.Context, ep fsp.EndpointID, sender string, args []string) {
-	if len(args) == 0 {
+	agent := d.deps.Config.DefaultAgent
+	if len(args) != 0 {
+		agent = args[0]
+	}
+	if agent == "" {
 		d.reply(ctx, ep, "usage.new", nil)
 		return
 	}
-	agent := args[0]
 	dir := ""
 	if len(args) > 1 {
 		dir = strings.Join(args[1:], " ")
