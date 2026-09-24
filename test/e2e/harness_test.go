@@ -442,16 +442,16 @@ func (r *rig) newSession() {
 }
 
 // approvalID matches the ID inside the reply instructions of an approval
-// request ("回复 y <id> 允许一次"). Matching the leading "审批 <id>" instead
-// would also match approval.decided, which shares that prefix.
-var approvalID = regexp.MustCompile(`y ([a-km-z]{5})\b`)
+// request ("如「同意 <id>」"). Matching the leading "审批 <id>" instead would
+// also match approval.decided, which shares that prefix.
+var approvalID = regexp.MustCompile(`如「同意 ([a-km-z]{5})」`)
 
 // approvalMark is the part of approval.request that no other message carries.
 // It is checked against the catalog so a wording change fails loudly here
 // rather than silently matching the wrong message.
 func (r *rig) approvalMark() string {
 	r.t.Helper()
-	const mark = "回复 y "
+	const mark = "回复「拒绝」拒绝"
 	req := r.tr("approval.request", map[string]any{
 		"ID": "aaaaa", "Tool": "t", "Description": "d", "Preview": "p", "AlwaysHint": "",
 	})
@@ -460,6 +460,9 @@ func (r *rig) approvalMark() string {
 	}
 	if decided := r.tr("approval.decided", map[string]any{"ID": "aaaaa", "Decision": "x"}); strings.Contains(decided, mark) {
 		r.t.Fatalf("approval.decided also contains %q, so it no longer tells the two apart", mark)
+	}
+	if hint := r.tr("approval.need_id", map[string]any{"N": 1, "ID": "aaaaa", "List": "l"}); strings.Contains(hint, mark) {
+		r.t.Fatalf("approval.need_id also contains %q, so it no longer tells the two apart", mark)
 	}
 	return mark
 }

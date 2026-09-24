@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -260,6 +261,8 @@ type fakeApprovals struct {
 	asked     []fsp.ApprovalRequest
 	release   chan struct{} // when set, Ask blocks until it is closed
 	verdict   fsp.Verdict
+	open      []ports.PendingApproval // what Pending reports, for every endpoint
+	lapsed    time.Time               // what Lapsed reports
 }
 
 func (f *fakeApprovals) Ask(ctx context.Context, req fsp.ApprovalRequest) (fsp.Verdict, error) {
@@ -278,7 +281,17 @@ func (f *fakeApprovals) Ask(ctx context.Context, req fsp.ApprovalRequest) (fsp.V
 	return verdict, nil
 }
 
+// bareWords are the decision words the fake accepts without an ID.
+var bareWords = map[string]fsp.Decision{
+	"y": fsp.DecisionAllowOnce, "同意": fsp.DecisionAllowOnce,
+	"a": fsp.DecisionAllowAlways, "总是": fsp.DecisionAllowAlways,
+	"n": fsp.DecisionReject, "拒绝": fsp.DecisionReject,
+}
+
 func (f *fakeApprovals) ParseVerdict(text string) (string, fsp.Decision, bool) {
+	if d, ok := bareWords[strings.ToLower(strings.TrimSpace(text))]; ok {
+		return "", d, true
+	}
 	m := verdictRe.FindStringSubmatch(text)
 	if m == nil {
 		return "", "", false
@@ -297,7 +310,32 @@ func (f *fakeApprovals) Resolve(ctx context.Context, id string, d fsp.Decision, 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.resolves = append(f.resolves, resolved{id: id, decision: d, by: by})
+	f.open = slices.DeleteFunc(f.open, func(p ports.PendingApproval) bool { return p.ID == id })
 	return true
+}
+
+func (f *fakeApprovals) Pending(ctx context.Context, ep fsp.EndpointID) []ports.PendingApproval {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.open)
+}
+
+func (f *fakeApprovals) Lapsed(ep fsp.EndpointID) time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lapsed
+}
+
+func (f *fakeApprovals) setLapsed(at time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lapsed = at
+}
+
+func (f *fakeApprovals) setOpen(open ...ports.PendingApproval) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.open = open
 }
 
 func (f *fakeApprovals) CancelSession(id fsp.SessionID) {
@@ -718,10 +756,21 @@ func (m *memStore) UpdateOutbox(ctx context.Context, id int64, state fsp.Deliver
 	defer m.mu.Unlock()
 	for i := range m.outbox {
 		if m.outbox[i].ID == id {
-			m.outbox[i].State, m.outbox[i].Attempts = state, attempts
+			m.outbox[i].State, m.outbox[i].Attempts, m.outbox[i].UpdatedAt = state, attempts, at
 		}
 	}
 	return nil
+}
+
+func (m *memStore) OutboxByKey(ctx context.Context, ep fsp.EndpointID, key string) (ports.OutboxRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := len(m.outbox) - 1; i >= 0; i-- {
+		if r := m.outbox[i]; r.Msg.Endpoint == ep && r.Msg.DedupeKey == key {
+			return r, nil
+		}
+	}
+	return ports.OutboxRow{}, fsp.ErrNotFound
 }
 
 func (m *memStore) OutboxByState(ctx context.Context, ep fsp.EndpointID, state fsp.DeliveryState) ([]ports.OutboxRow, error) {

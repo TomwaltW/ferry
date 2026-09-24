@@ -117,7 +117,9 @@ a abcde
 ```
 
 `y` allows once, `n` refuses, `a` allows that kind of call from now on.
-Unanswered requests are refused when the timeout expires.
+`同意`, `拒绝` and `总是` work in place of `y`, `n` and `a`, and while only one
+approval is waiting, `y` or `同意` alone will do. Unanswered requests are refused
+when the timeout expires.
 
 ## When something looks wrong
 

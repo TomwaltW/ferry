@@ -44,9 +44,12 @@ func (d *DB) UpdateOutbox(ctx context.Context, id int64, state fsp.DeliveryState
 	return nil
 }
 
+// outboxColumns are the columns scanOutboxRow reads, in its order.
+const outboxColumns = `id, endpoint, session_id, kind, body, file_path, dedupe_key, urgent, state, attempts, created_at, updated_at`
+
 func (d *DB) OutboxByState(ctx context.Context, ep fsp.EndpointID, state fsp.DeliveryState) ([]ports.OutboxRow, error) {
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT id, endpoint, session_id, kind, body, file_path, dedupe_key, urgent, state, attempts, created_at
+		SELECT `+outboxColumns+`
 		FROM outbox WHERE endpoint = ? AND state = ? ORDER BY id ASC`, ep.String(), string(state))
 	if err != nil {
 		return nil, fmt.Errorf("store: outbox for %s: %w", ep, err)
@@ -54,35 +57,59 @@ func (d *DB) OutboxByState(ctx context.Context, ep fsp.EndpointID, state fsp.Del
 	defer rows.Close()
 	var out []ports.OutboxRow
 	for rows.Next() {
-		var (
-			row       ports.OutboxRow
-			endpoint  string
-			session   string
-			kind      string
-			state     string
-			urgent    int
-			createdAt int64
-		)
-		if err := rows.Scan(&row.ID, &endpoint, &session, &kind, &row.Msg.Text, &row.Msg.FilePath,
-			&row.Msg.DedupeKey, &urgent, &state, &row.Attempts, &createdAt); err != nil {
-			return nil, fmt.Errorf("store: scan outbox row: %w", err)
-		}
-		parsed, err := fsp.ParseEndpoint(endpoint)
+		row, err := scanOutboxRow(rows)
 		if err != nil {
-			return nil, fmt.Errorf("store: scan outbox row: %w", err)
+			return nil, err
 		}
-		row.Msg.Endpoint = parsed
-		row.Msg.Session = fsp.SessionID(session)
-		row.Msg.Kind = fsp.OutKind(kind)
-		row.Msg.Urgent = urgent != 0
-		row.State = fsp.DeliveryState(state)
-		row.CreatedAt = fromMillis(createdAt)
 		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("store: scan outbox rows: %w", err)
 	}
 	return out, nil
+}
+
+func (d *DB) OutboxByKey(ctx context.Context, ep fsp.EndpointID, dedupeKey string) (ports.OutboxRow, error) {
+	row, err := scanOutboxRow(d.db.QueryRowContext(ctx, `
+		SELECT `+outboxColumns+`
+		FROM outbox WHERE endpoint = ? AND dedupe_key = ? ORDER BY id DESC LIMIT 1`, ep.String(), dedupeKey))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ports.OutboxRow{}, fmt.Errorf("store: outbox row %q for %s: %w", dedupeKey, ep, fsp.ErrNotFound)
+	}
+	return row, err
+}
+
+// scanOutboxRow reads one row of outboxColumns.
+func scanOutboxRow(sc interface{ Scan(...any) error }) (ports.OutboxRow, error) {
+	var (
+		row       ports.OutboxRow
+		endpoint  string
+		session   string
+		kind      string
+		state     string
+		urgent    int
+		createdAt int64
+		updatedAt int64
+	)
+	if err := sc.Scan(&row.ID, &endpoint, &session, &kind, &row.Msg.Text, &row.Msg.FilePath,
+		&row.Msg.DedupeKey, &urgent, &state, &row.Attempts, &createdAt, &updatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ports.OutboxRow{}, err
+		}
+		return ports.OutboxRow{}, fmt.Errorf("store: scan outbox row: %w", err)
+	}
+	parsed, err := fsp.ParseEndpoint(endpoint)
+	if err != nil {
+		return ports.OutboxRow{}, fmt.Errorf("store: scan outbox row: %w", err)
+	}
+	row.Msg.Endpoint = parsed
+	row.Msg.Session = fsp.SessionID(session)
+	row.Msg.Kind = fsp.OutKind(kind)
+	row.Msg.Urgent = urgent != 0
+	row.State = fsp.DeliveryState(state)
+	row.CreatedAt = fromMillis(createdAt)
+	row.UpdatedAt = fromMillis(updatedAt)
+	return row, nil
 }
 
 func (d *DB) OutboxEndpoints(ctx context.Context, state fsp.DeliveryState) ([]fsp.EndpointID, error) {

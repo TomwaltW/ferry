@@ -25,6 +25,7 @@ type OutboxRow struct {
 	State     fsp.DeliveryState
 	Attempts  int
 	CreatedAt time.Time
+	UpdatedAt time.Time // when State last changed
 }
 
 type Window struct {
@@ -71,6 +72,9 @@ type Store interface {
 	UpdateOutbox(ctx context.Context, id int64, state fsp.DeliveryState, attempts int, at time.Time) error
 	OutboxByState(ctx context.Context, ep fsp.EndpointID, state fsp.DeliveryState) ([]OutboxRow, error) // ascending by ID
 	OutboxEndpoints(ctx context.Context, state fsp.DeliveryState) ([]fsp.EndpointID, error)
+	// OutboxByKey returns the newest row queued for ep under dedupeKey; none
+	// yields fsp.ErrNotFound.
+	OutboxByKey(ctx context.Context, ep fsp.EndpointID, dedupeKey string) (OutboxRow, error)
 	SaveWindow(ctx context.Context, w Window) error
 	LoadWindow(ctx context.Context, ep fsp.EndpointID) (Window, error) // missing window yields fsp.ErrNotFound
 

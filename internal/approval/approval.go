@@ -61,6 +61,9 @@ type manager struct {
 
 	mu      sync.Mutex
 	pending map[string]*pendingApproval
+	// lapsed is when an approval asked at each endpoint last ended without a
+	// human answer: timed out or cancelled.
+	lapsed map[fsp.EndpointID]time.Time
 }
 
 // pendingApproval is an approval waiting for a human. result carries the
@@ -68,6 +71,8 @@ type manager struct {
 type pendingApproval struct {
 	req    fsp.ApprovalRequest
 	owner  fsp.EndpointID
+	asked  time.Time // when the question was queued for owner
+	key    string    // the dedupe key the question was queued under
 	result chan fsp.Verdict
 }
 
@@ -120,6 +125,7 @@ func New(opts Options) ports.Approvals {
 		log:           log,
 		timeout:       timeout,
 		pending:       make(map[string]*pendingApproval),
+		lapsed:        make(map[fsp.EndpointID]time.Time),
 	}
 }
 
@@ -170,18 +176,18 @@ func (m *manager) askOwner(ctx context.Context, req fsp.ApprovalRequest) (fsp.Ve
 		return m.auto(ctx, req, fsp.DecisionReject, id), nil
 	}
 
+	// The key is the one part of the message that reaches the adapter as it
+	// was sent, so it carries the approval to entry points with buttons
+	// (spec-p4-b1 3.6). Pending also reads the question's delivery back by it.
+	_, _, always := firstOption(req.Options, fsp.OptAllowAlways)
 	m.mu.Lock()
 	req.ID = m.idForLocked(req.ID)
-	p := &pendingApproval{req: req, owner: owner, result: make(chan fsp.Verdict, 1)}
+	key := ports.ApprovalDedupeKey(ports.ApprovalRef{ID: req.ID, AllowAlways: always}, req.CreatedAt)
+	p := &pendingApproval{req: req, owner: owner, asked: m.clk.Now(), key: key, result: make(chan fsp.Verdict, 1)}
 	m.pending[req.ID] = p
 	m.mu.Unlock()
 
 	m.record(ctx, req)
-	// The key is the one part of the message that reaches the adapter as it
-	// was sent, so it carries the approval to entry points with buttons
-	// (spec-p4-b1 3.6).
-	_, _, always := firstOption(req.Options, fsp.OptAllowAlways)
-	key := ports.ApprovalDedupeKey(ports.ApprovalRef{ID: req.ID, AllowAlways: always}, req.CreatedAt)
 	m.send(ctx, fsp.Outbound{
 		Endpoint:  owner,
 		Session:   req.Session,
@@ -200,6 +206,7 @@ func (m *manager) askOwner(ctx context.Context, req fsp.ApprovalRequest) (fsp.Ve
 			// Someone answered as the timer fired; their verdict is on its way.
 			return <-p.result, nil
 		}
+		m.lapse(owner)
 		clean := context.WithoutCancel(ctx)
 		v := rejectVerdict(req, byTimeout)
 		m.persist(clean, v, req)
@@ -209,6 +216,7 @@ func (m *manager) askOwner(ctx context.Context, req fsp.ApprovalRequest) (fsp.Ve
 		if _, won := m.take(req.ID); !won {
 			return <-p.result, nil
 		}
+		m.lapse(owner)
 		clean := context.WithoutCancel(ctx)
 		v := fsp.Verdict{ApprovalID: req.ID, Decision: fsp.DecisionReject, By: byCancel}
 		m.persist(clean, v, req)
@@ -239,6 +247,13 @@ func (m *manager) sessionOwner(ctx context.Context, id fsp.SessionID) (fsp.Endpo
 		return fsp.EndpointID{}, err
 	}
 	return s.Owner, nil
+}
+
+// lapse notes that an approval asked at ep ended without a human answer.
+func (m *manager) lapse(ep fsp.EndpointID) {
+	m.mu.Lock()
+	m.lapsed[ep] = m.clk.Now()
+	m.mu.Unlock()
 }
 
 // take removes the pending approval and reports whether this caller is the one
