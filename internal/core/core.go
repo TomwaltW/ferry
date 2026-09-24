@@ -87,6 +87,9 @@ type Daemon struct {
 	// is pending. An entry point that is up has no entry.
 	imFailed map[fsp.Platform]string
 	stop     bool // the daemon is shutting down; parking stays silent
+	// gatherFired carries a gather timer back to the Run loop, which starts
+	// the turn, so that turns never start beside /stop, /close or shutdown.
+	gatherFired chan gatherTick
 	// baseCtx is the daemon's own context, so that an external session attached
 	// over the control socket also ends when the daemon does.
 	baseCtx context.Context
@@ -108,6 +111,8 @@ func New(d Deps) *Daemon {
 		windows:   make(map[string]string),
 		terminals: make(map[string]terminalList),
 		imFailed:  make(map[fsp.Platform]string),
+
+		gatherFired: make(chan gatherTick),
 	}
 	bind := fsp.Platform(d.Config.External.WithDefaults().BindPlatform)
 	for _, im := range d.IMs {
@@ -177,6 +182,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return nil
 		case in := <-inbound:
 			d.handleInbound(runCtx, in)
+		case t := <-d.gatherFired:
+			d.fireGather(runCtx, t)
 		}
 	}
 }

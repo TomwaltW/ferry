@@ -48,6 +48,30 @@ front of a command word counts as `/`, so `、ls` is `/ls`. The number of `/use`
 `/close`, `/file` and `/pair` may follow the word without a space, as in `切换2`
 or `关闭2`, and full-width digits such as `２` read as `2`.
 
+## Messages in pieces
+
+People often split one request over several chat messages. While the session is
+idle, Ferry waits a moment before it starts the turn: every new message restarts
+a 2.5-second wait, and the turn starts at most ten seconds after the first
+message. Everything that arrived goes to the agent as one prompt, with a single
+receipt, and the typing indicator shows while Ferry waits. A picture or file
+sent without words waits four times as long, since the question usually follows
+in a message of its own.
+
+Commands and approval answers are still handled at once, and `/stop` during the
+wait drops what was gathered. A busy session queues messages as before.
+`input.gather` in the configuration sets the wait, and `"0s"` turns it off.
+
+## Voice messages
+
+WeChat transcribes voice messages itself. Ferry hands the transcription to the
+agent, marked as one so the agent allows for homophones in names and
+identifiers; the recording stays on disk but is not passed on, since no agent
+can play it. The receipt repeats what WeChat heard: if it misheard, send `/stop`
+(or 停) before the agent acts on it. A voice message WeChat could not transcribe
+gets a request to say it again or type it. A voice message can refuse an
+approval but not allow one, as described below.
+
 ## Approvals
 
 When an agent wants to do something the policy does not decide on its own, you

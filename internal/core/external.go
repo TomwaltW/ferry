@@ -400,11 +400,15 @@ func (s *session) closeExternal(ctx context.Context) {
 	kind := s.external.req.Kind
 	s.as = nil
 	s.pending = nil
+	gathering := s.dropGatherLocked()
 	s.buf.Reset()
 	s.rec.State = fsp.StateClosed
 	s.rec.LastActive = s.d.deps.Clock.Now()
 	rec := s.rec
 	s.mu.Unlock()
+	if gathering {
+		s.d.typing(ctx, rec.Owner, false)
+	}
 
 	s.d.persist(ctx, rec)
 	if err := s.d.deps.Store.Unbind(ctx, rec.Owner, rec.ID); err != nil {

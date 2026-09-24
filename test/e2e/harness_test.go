@@ -165,6 +165,9 @@ func newRig(t *testing.T, opts ...rigOption) *rig {
 	cfg.WeChat.CDNBaseURL = gw.CDNBaseURL()
 	cfg.Outbox.MergeInterval = config.Duration{Duration: 200 * time.Millisecond}
 	cfg.Policy.ApprovalTimeout = config.Duration{Duration: 2 * time.Second}
+	// Every message would otherwise wait input.gather for more before its
+	// turn starts; the tests that are about that wait turn it back on.
+	cfg.Input.Gather = config.Duration{}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("e2e config invalid: %v", err)
 	}

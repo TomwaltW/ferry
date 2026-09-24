@@ -25,6 +25,7 @@ type Config struct {
 	Agents       []AgentConfig   `toml:"agents"`
 	Policy       PolicyConfig    `toml:"policy"`
 	Outbox       OutboxConfig    `toml:"outbox"`
+	Input        InputConfig     `toml:"input"`
 	Registry     RegistryConfig  `toml:"registry"`
 	Limits       LimitsConfig    `toml:"limits"`
 	Handoff      HandoffConfig   `toml:"handoff"`
@@ -165,6 +166,16 @@ type OutboxConfig struct {
 	DigestMax           int      `toml:"digest_max"`  // how many lines a digest lists, default 5
 	FileKeep            int      `toml:"file_keep"`   // long-output files kept per endpoint, default 20
 	LongOutput          string   `toml:"long_output"` // file | split, default file
+}
+
+// InputConfig is about what chat sends in, as opposed to what Ferry sends out.
+type InputConfig struct {
+	// Gather is how long an idle session waits after a message for more of it
+	// before starting a turn, since chat users often split one request over
+	// several messages. Every new piece restarts the wait, up to four times
+	// Gather after the first. 0 starts a turn on the first message; default
+	// 2.5s, at most 10s.
+	Gather Duration `toml:"gather"`
 }
 
 type NotifyConfig struct {

@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,4 +49,24 @@ func TestBareWordIsTextWithNothingWaiting(t *testing.T) {
 	mark := r.markOwner()
 	r.send("同意")
 	r.waitOwnerTextFrom(mark, "unknown: 同意")
+}
+
+// Pieces of one message sent in quick succession reach the agent as one prompt
+// with a single receipt, through the real daemon, outbox and gateway.
+func TestGatheredPieces(t *testing.T) {
+	r := newRig(t, func(r *rig) { r.cfg.Input.Gather = config.Duration{Duration: 400 * time.Millisecond} })
+	r.newSession()
+
+	mark := r.markOwner()
+	r.send("echo 帮我改一下")
+	r.send("outbox 的重试")
+	r.waitOwnerTextFrom(mark, "帮我改一下\noutbox 的重试")
+	receipt := r.tr("turn.accepted", map[string]any{"Agent": agentName, "Slot": 1})
+	n := 0
+	for _, msg := range r.sentTo(ownerID)[mark:] {
+		n += strings.Count(msg, receipt)
+	}
+	if n != 1 {
+		t.Errorf("%d receipts for one message sent in two pieces, want 1", n)
+	}
 }

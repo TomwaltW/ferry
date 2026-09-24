@@ -294,6 +294,17 @@ func (d *Daemon) cmdStop(ctx context.Context, ep fsp.EndpointID) {
 		d.reply(ctx, ep, "hint.no_session", nil)
 		return
 	}
+	s.mu.Lock()
+	dropped := s.dropGatherLocked()
+	busy := s.busyLocked()
+	s.mu.Unlock()
+	if dropped && !busy {
+		// The pieces never reached the agent, so there is no turn to cancel and
+		// no turn end to say it stopped.
+		d.typing(ctx, ep, false)
+		d.reply(ctx, ep, "turn.stopped", nil)
+		return
+	}
 	if as := s.live(); as != nil {
 		if err := as.Cancel(ctx); err != nil {
 			d.log.Error("cancel turn", "session", s.id(), "error", err)
@@ -325,10 +336,14 @@ func (d *Daemon) cmdClose(ctx context.Context, ep fsp.EndpointID, args []string)
 	as := s.as
 	s.as = nil
 	s.pending = nil
+	gathering := s.dropGatherLocked()
 	s.rec.State = fsp.StateClosed
 	s.rec.LastActive = d.deps.Clock.Now()
 	rec := s.rec
 	s.mu.Unlock()
+	if gathering {
+		d.typing(ctx, ep, false)
+	}
 
 	if as != nil {
 		if err := as.Close(); err != nil {

@@ -80,8 +80,14 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 		return
 	}
 
-	// 7. Attachments that made it to disk join the prompt; the ones that did
-	// not are reported, and the text still goes through.
+	// 7. A voice message WeChat could not transcribe is answered here: the
+	// agent cannot listen to the recording. Attachments that made it to disk
+	// join the prompt; the ones that did not are reported, and the text still
+	// goes through.
+	if strings.TrimSpace(text) == "" && onlyVoice(in.Attachments) {
+		d.reply(ctx, ep, "media.voice_no_text", nil)
+		return
+	}
 	attachments := d.attachmentLines(ctx, ep, in.Attachments)
 	if strings.TrimSpace(text) == "" && len(attachments) == 0 {
 		return
@@ -103,12 +109,21 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 		return
 	}
 
-	// 9. Anything not sent by the bot owner carries the sender along.
+	// 9. A transcription says so, for the agent to allow for homophones in
+	// names and identifiers. Anything not sent by the bot owner carries the
+	// sender along.
 	prompt := text
+	heard := ""
+	if hasVoice(in.Attachments) {
+		heard = strings.TrimSpace(text)
+		if heard != "" {
+			prompt = d.t(ctx, ep, "prompt.voice", nil) + "\n" + text
+		}
+	}
 	if owner, err := d.isOwner(ctx, ep, in.SenderID); err != nil {
 		d.log.Error("role", "endpoint", ep.String(), "error", err)
 	} else if !owner {
-		prompt = "[from " + in.SenderID + "] " + text
+		prompt = "[from " + in.SenderID + "] " + prompt
 	}
 	if len(attachments) != 0 {
 		prompt = strings.TrimRight(prompt, "\n")
@@ -118,10 +133,11 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 		prompt += strings.Join(attachments, "\n")
 	}
 
-	// 10. A busy session collects the text instead of answering.
-	if s.submit(ctx, prompt) {
-		d.reply(ctx, ep, "turn.accepted", map[string]any{"Agent": s.agent(), "Slot": s.slot})
-		d.typing(ctx, ep, true)
+	// 10. An idle session waits a moment for the rest of a message sent in
+	// pieces; a busy one collects the text instead of answering.
+	frag := fragment{ep: ep, prompt: prompt, heard: heard, wordless: strings.TrimSpace(text) == ""}
+	if !d.gather(ctx, s, frag) {
+		d.startTurn(ctx, s, []fragment{frag}, false)
 	}
 
 	// 11. The body never reaches the audit log, only its length.
@@ -136,11 +152,16 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 
 // attachmentLines turns the attachments of an inbound message into the lines
 // appended to the prompt. An attachment without a path never made it to disk:
-// the endpoint is told why, and the agent never hears about it.
+// the endpoint is told why, and the agent never hears about it. A voice
+// recording is left out either way: its words are already the text, and no
+// agent can play the SILK file WeChat sends.
 func (d *Daemon) attachmentLines(ctx context.Context, ep fsp.EndpointID, atts []fsp.Attachment) []string {
 	var lines []string
 	maxMB := d.maxMediaMB()
 	for _, a := range atts {
+		if a.Kind == "voice" {
+			continue
+		}
 		if a.Path != "" {
 			lines = append(lines, d.t(ctx, ep, "prompt.attachment", map[string]any{"Path": a.Path}))
 			continue
@@ -234,6 +255,17 @@ func (d *Daemon) resolveVerdict(ctx context.Context, in fsp.Inbound, id string, 
 		return
 	}
 	d.deps.Approvals.Resolve(ctx, id, decision, in.SenderID)
+}
+
+// onlyVoice reports whether a message carries attachments and every one of
+// them is a voice recording.
+func onlyVoice(atts []fsp.Attachment) bool {
+	for _, a := range atts {
+		if a.Kind != "voice" {
+			return false
+		}
+	}
+	return len(atts) != 0
 }
 
 // hasVoice reports whether a message carries a voice recording, which on

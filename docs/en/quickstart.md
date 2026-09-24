@@ -105,7 +105,8 @@ Message the bot from your own account:
 `/new` starts an agent in that directory — it must be inside one of your
 workspace roots — and replies with the session number. After that, anything you
 send that is not a command becomes a prompt for that session. You get a receipt
-immediately, progress as it streams, and the result when the turn ends.
+once Ferry has waited a moment for any follow-up messages, progress as it
+streams, and the result when the turn ends.
 
 If the agent wants to run or edit something, you get an approval request with a
 five-letter code:
