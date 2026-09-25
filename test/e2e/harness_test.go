@@ -165,6 +165,9 @@ func newRig(t *testing.T, opts ...rigOption) *rig {
 	cfg.WeChat.CDNBaseURL = gw.CDNBaseURL()
 	cfg.Outbox.MergeInterval = config.Duration{Duration: 200 * time.Millisecond}
 	cfg.Policy.ApprovalTimeout = config.Duration{Duration: 2 * time.Second}
+	// Every message would otherwise wait input.gather for more before its
+	// turn starts; the tests that are about that wait turn it back on.
+	cfg.Input.Gather = config.Duration{}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("e2e config invalid: %v", err)
 	}
@@ -442,24 +445,29 @@ func (r *rig) newSession() {
 }
 
 // approvalID matches the ID inside the reply instructions of an approval
-// request ("回复 y <id> 允许一次"). Matching the leading "审批 <id>" instead
-// would also match approval.decided, which shares that prefix.
-var approvalID = regexp.MustCompile(`y ([a-km-z]{5})\b`)
+// request ("回复「同意 <id>」"). Matching the leading "审批 <id>" instead would
+// also match approval.decided, which shares that prefix.
+var approvalID = regexp.MustCompile(`回复「同意 ([a-km-z]{5})」`)
 
 // approvalMark is the part of approval.request that no other message carries.
 // It is checked against the catalog so a wording change fails loudly here
 // rather than silently matching the wrong message.
 func (r *rig) approvalMark() string {
 	r.t.Helper()
-	const mark = "回复 y "
+	const mark = "预览可能包含敏感信息"
 	req := r.tr("approval.request", map[string]any{
-		"ID": "aaaaa", "Tool": "t", "Description": "d", "Preview": "p", "AlwaysHint": "",
+		"ID": "aaaaa", "Tool": "t", "Description": "d", "Preview": "p", "AlwaysHint": "", "BareHint": "",
 	})
 	if !strings.Contains(req, mark) {
 		r.t.Fatalf("approval.request no longer contains %q, update the e2e marker:\n%s", mark, req)
 	}
 	if decided := r.tr("approval.decided", map[string]any{"ID": "aaaaa", "Decision": "x"}); strings.Contains(decided, mark) {
 		r.t.Fatalf("approval.decided also contains %q, so it no longer tells the two apart", mark)
+	}
+	for _, key := range []string{"approval.need_id", "approval.still_waiting"} {
+		if other := r.tr(key, map[string]any{"N": 1, "ID": "aaaaa", "List": "l", "Why": ""}); strings.Contains(other, mark) {
+			r.t.Fatalf("%s also contains %q, so it no longer tells the two apart", key, mark)
+		}
 	}
 	return mark
 }

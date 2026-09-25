@@ -73,6 +73,10 @@ func (s *memStore) OutboxByState(_ context.Context, ep fsp.EndpointID, state fsp
 	return out, nil
 }
 
+func (s *memStore) OutboxByKey(context.Context, fsp.EndpointID, string) (ports.OutboxRow, error) {
+	return ports.OutboxRow{}, fsp.ErrUnsupported
+}
+
 func (s *memStore) OutboxEndpoints(_ context.Context, state fsp.DeliveryState) ([]fsp.EndpointID, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

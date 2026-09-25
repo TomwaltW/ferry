@@ -28,6 +28,14 @@ type session struct {
 	tools   map[string]bool // tool call IDs already announced this turn
 	pending []string        // text that arrived while the session was busy
 	closing bool            // /close is in progress, do not park on the way out
+
+	// gather holds the pieces of a message sent in several while the idle
+	// session waits for the rest (input.gather). gatherFirst is when the first
+	// piece came, and gatherGen tells the timer armed for the latest piece from
+	// the stale ones.
+	gather      []fragment
+	gatherFirst time.Time
+	gatherGen   uint64
 }
 
 func (s *session) id() fsp.SessionID {
@@ -88,8 +96,7 @@ func (d *Daemon) mergeInterval() time.Duration {
 func (s *session) submit(ctx context.Context, text string) bool {
 	s.mu.Lock()
 	as := s.as
-	busy := s.rec.State == fsp.StateRunning || s.rec.State == fsp.StateAwaiting
-	if as == nil || busy {
+	if as == nil || s.busyLocked() {
 		s.pending = append(s.pending, text)
 		s.mu.Unlock()
 		return false
@@ -119,6 +126,22 @@ func (s *session) submit(ctx context.Context, text string) bool {
 	}
 	s.d.persist(ctx, rec)
 	return true
+}
+
+// busyLocked reports whether a turn is running or waiting on an approval. The
+// caller holds s.mu.
+func (s *session) busyLocked() bool {
+	return s.rec.State == fsp.StateRunning || s.rec.State == fsp.StateAwaiting
+}
+
+// dropGatherLocked forgets the pieces waiting for input.gather and makes the
+// timer armed for them stale. It reports whether there were any. The caller
+// holds s.mu.
+func (s *session) dropGatherLocked() bool {
+	dropped := len(s.gather) != 0
+	s.gather = nil
+	s.gatherGen++
+	return dropped
 }
 
 // start launches the event loop of a live session.
@@ -301,11 +324,15 @@ func (s *session) parkWith(ctx context.Context, key, detail string) {
 	as := s.as
 	s.as = nil
 	s.pending = nil
+	gathering := s.dropGatherLocked()
 	s.buf.Reset()
 	s.rec.State = fsp.StateParked
 	s.rec.LastActive = s.d.deps.Clock.Now()
 	rec := s.rec
 	s.mu.Unlock()
+	if gathering {
+		s.d.typing(ctx, rec.Owner, false)
+	}
 
 	if as != nil {
 		if err := as.Close(); err != nil {

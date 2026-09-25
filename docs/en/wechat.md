@@ -9,12 +9,14 @@ of a session actually looks like.
 
 `ferry login wechat` fetches a QR code and prints it in the terminal. The code
 refreshes itself up to three times while you take your phone out. Scan it with
-the account that should be the bot, not with the account you will chat from.
+the account you will chat from. The bot is not a WeChat account of its own, so
+there is no second account to scan with.
 
 What a confirmed login returns is a bot token, a bot ID and the ID of whoever
-scanned. That last one becomes the owner. If the platform later invalidates the
-session, the daemon marks WeChat offline, keeps running, and retries once a
-minute; `ferry login wechat` puts it back.
+scanned. That last one becomes the owner, and the login prints both IDs when it
+succeeds. If the platform later invalidates the session, the daemon marks
+WeChat offline, keeps running, and retries once a minute; `ferry login wechat`
+puts it back.
 
 ## Commands
 
@@ -25,20 +27,59 @@ one slash and treated as text.
 | Command | Alias | What it does |
 | --- | --- | --- |
 | `/ls` | 会话 | List this chat's sessions; `▶` marks the current one |
-| `/new <agent> [dir]` | 新建 | Start a session; the directory defaults to your first workspace root |
-| `/use <n>` | | Switch to session n, resuming it if it was parked |
+| `/new [agent] [dir]` | 新建 | Start a session; the agent defaults to `default_agent` and the directory to your first workspace root |
+| `/use <n>` | 切换, 切换到 | Switch to session n, resuming it if it was parked |
 | `/agents` | | List configured agents and whether they can run |
-| `/stop` | 停 | Cancel the current turn |
+| `/stop` | 停, 停止 | Cancel the current turn |
 | `/close [n]` | 关闭 | Close a session |
 | `/mode <key> <value>` | | Set a session option, such as the agent's mode |
-| `/lang <zh or en>` | | Switch the bot's language for this chat |
-| `/pair <code>` | | Confirm a pairing code (approvers only) |
+| `/lang <zh or en>` | 语言 | Switch the bot's language for this chat |
+| `/pair <code>` | 配对 | Confirm a pairing code (approvers only) |
 | `/pull` | 收件 | Send the next batch of messages held while the window was shut |
-| `/file <n>` | | Resend long output n as a file |
+| `/file [n]` | 文件 | Resend long output n as a file |
 | `/help` | 帮助 | The command list |
 
 `/pull` answers `Nothing is held back` once the backlog is empty. `/file` without a
 number resends the most recent one.
+
+Chinese keyboards are taken as they type. Desktop WeChat with a pinyin input
+method turns the `/` key into `、`, which counts as `/` in front of a command
+word, so `、ls` is `/ls`. Full-width characters in the command word, its
+number, a language or `force` read as their ASCII selves, as in `／ｌｓ` or
+`切换 ２`; paths and `/mode` values stay as typed. The number of `/use`,
+`/close`, `/file` and `/pair` may follow the word without a space, as in `切换2`
+or `关闭2`, and a one-word command may end in a full stop, the way voice input
+writes it (`停。`).
+
+停止, 切换, 关闭, 文件, 语言 and 配对 are everyday words, so they make a command
+only when the rest of the message is exactly what the command takes: `停止`,
+`切换 2`, `关闭`, `文件 3`, `语言 英文`, `配对 123456`. A message such as
+`文件 main.go 里有个 bug`, `关闭 2 个测试` or `停止 docker 容器` goes to the agent
+as text.
+
+## Messages in pieces
+
+People often split one request over several chat messages. While the session is
+idle, Ferry waits a moment before it starts the turn: every new message restarts
+a 2.5-second wait, and the turn starts at most ten seconds after the first
+message. Everything that arrived goes to the agent as one prompt, with a single
+receipt, and the typing indicator shows while Ferry waits. A picture or file
+sent without words waits four times as long, since the question usually follows
+in a message of its own.
+
+Commands and approval answers are still handled at once, and `/stop` during the
+wait drops what was gathered. A busy session queues messages as before.
+`input.gather` in the configuration sets the wait, and `"0s"` turns it off.
+
+## Voice messages
+
+WeChat transcribes voice messages itself. Ferry hands the transcription to the
+agent, marked as one so the agent allows for homophones in names and
+identifiers; the recording stays on disk but is not passed on, since no agent
+can play it. The receipt repeats what WeChat heard: if it misheard, send `/stop`
+(or 停) before the agent acts on it. A voice message WeChat could not transcribe
+gets a request to say it again or type it. A voice message can refuse an
+approval but not allow one, as described below.
 
 ## Approvals
 
@@ -51,6 +92,30 @@ y abcde
 n abcde
 a abcde
 ```
+
+The Chinese words work the same way, with or without a space before the code:
+`同意 abcde` (or 允许) allows once, `拒绝 abcde` (or 不同意, 不允许) refuses, and
+`总是 abcde` (or 总是允许, 始终允许) always allows. A comma or colon between the
+word and the code, and a trailing full stop, are fine.
+
+While it is the only approval waiting, `y`, `n`, `同意` or `拒绝` on its own
+answers it. Ferry takes a word without a code only when it cannot be mistaken:
+the approval belongs to the session in the foreground, its question was
+delivered at least three seconds ago, and no other approval in this chat timed
+out or was cancelled in the last minute. Otherwise you are asked to add the
+code, and the word goes nowhere else. With no approval waiting, the same word is
+ordinary text for the agent. "Always allow" always needs the code. So do the
+approvals of a Claude Code channel session: Claude Code asks in its terminal as
+well, and a request answered there stays open in chat until it times out, so a
+bare word next to one is ordinary text for the session.
+
+Anything else you send while the session waits on an approval is held back
+until the turn ends, like any message to a busy session. The first such message
+gets a note that the approval is still open, so that an answer like 好的 is not
+mistaken for a decision.
+
+A voice message can refuse an approval but never allow one: WeChat's
+transcription can drop the 不 of 不同意. Type your answer to allow.
 
 `a` is only offered when the agent itself supports "always allow". An approval
 nobody answers is refused when the timeout runs out, and you are told so. Only

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/TomwaltW/ferry/internal/fsp"
 	"github.com/TomwaltW/ferry/internal/ports"
@@ -17,6 +18,15 @@ const defaultMaxMediaMB = 20
 // handleInbound runs the eleven steps of spec-p1 3.6 for one inbound message.
 func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 	ep := in.Endpoint
+	// When the message was written, as far as can be told: the earlier of now,
+	// before step 3 flushes anything, and the platform's own send time. A
+	// question delivered after that was not on screen when the sender wrote
+	// this, however long the message waited to be handled. The platform clock
+	// only ever makes the check stricter.
+	arrived := d.deps.Clock.Now()
+	if !in.ReceivedAt.IsZero() && in.ReceivedAt.Before(arrived) {
+		arrived = in.ReceivedAt
+	}
 
 	// 1. Duplicates never reach anything else.
 	seen, err := d.deps.Store.SeenMessage(ctx, ep, in.MessageID, in.ReceivedAt)
@@ -53,12 +63,20 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 		d.log.Error("flush held", "endpoint", ep.String(), "error", err)
 	}
 
-	// 4. A verdict is a whole message and only counts from an approver.
+	// 4. A verdict is a whole message and only counts from an approver. A
+	// decision word without an ID is ordinary text unless an approval is
+	// waiting here.
 	if id, decision, ok := d.deps.Approvals.ParseVerdict(in.Text); ok {
-		if d.deps.ACL.IsApprover(ep, in.SenderID) {
-			d.deps.Approvals.Resolve(ctx, id, decision, in.SenderID)
+		if id == "" {
+			if d.bareVerdict(ctx, in, decision, arrived) {
+				return
+			}
+		} else {
+			if d.deps.ACL.IsApprover(ep, in.SenderID) {
+				d.resolveVerdict(ctx, in, id, decision)
+			}
+			return
 		}
-		return
 	}
 
 	// 5. "//" escapes a message that would otherwise look like a command.
@@ -71,8 +89,14 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 		return
 	}
 
-	// 7. Attachments that made it to disk join the prompt; the ones that did
-	// not are reported, and the text still goes through.
+	// 7. A voice message WeChat could not transcribe is answered here: the
+	// agent cannot listen to the recording. Attachments that made it to disk
+	// join the prompt; the ones that did not are reported, and the text still
+	// goes through.
+	if strings.TrimSpace(text) == "" && onlyVoice(in.Attachments) {
+		d.reply(ctx, ep, "media.voice_no_text", nil)
+		return
+	}
 	attachments := d.attachmentLines(ctx, ep, in.Attachments)
 	if strings.TrimSpace(text) == "" && len(attachments) == 0 {
 		return
@@ -94,12 +118,25 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 		return
 	}
 
-	// 9. Anything not sent by the bot owner carries the sender along.
+	// Text for a session that waits on the approver is held back until the
+	// turn ends; say so once, or the approver may think they have answered.
+	d.nudgeAwaiting(ctx, in, s)
+
+	// 9. A transcription says so, for the agent to allow for homophones in
+	// names and identifiers. Anything not sent by the bot owner carries the
+	// sender along.
 	prompt := text
+	heard := ""
+	if hasVoice(in.Attachments) {
+		heard = strings.TrimSpace(text)
+		if heard != "" {
+			prompt = d.t(ctx, ep, "prompt.voice", nil) + "\n" + text
+		}
+	}
 	if owner, err := d.isOwner(ctx, ep, in.SenderID); err != nil {
 		d.log.Error("role", "endpoint", ep.String(), "error", err)
 	} else if !owner {
-		prompt = "[from " + in.SenderID + "] " + text
+		prompt = "[from " + in.SenderID + "] " + prompt
 	}
 	if len(attachments) != 0 {
 		prompt = strings.TrimRight(prompt, "\n")
@@ -109,10 +146,11 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 		prompt += strings.Join(attachments, "\n")
 	}
 
-	// 10. A busy session collects the text instead of answering.
-	if s.submit(ctx, prompt) {
-		d.reply(ctx, ep, "turn.accepted", map[string]any{"Agent": s.agent(), "Slot": s.slot})
-		d.typing(ctx, ep, true)
+	// 10. An idle session waits a moment for the rest of a message sent in
+	// pieces; a busy one collects the text instead of answering.
+	frag := fragment{ep: ep, prompt: prompt, heard: heard, wordless: strings.TrimSpace(text) == ""}
+	if !d.gather(ctx, s, frag) {
+		d.startTurn(ctx, s, []fragment{frag}, false)
 	}
 
 	// 11. The body never reaches the audit log, only its length.
@@ -127,11 +165,16 @@ func (d *Daemon) handleInbound(ctx context.Context, in fsp.Inbound) {
 
 // attachmentLines turns the attachments of an inbound message into the lines
 // appended to the prompt. An attachment without a path never made it to disk:
-// the endpoint is told why, and the agent never hears about it.
+// the endpoint is told why, and the agent never hears about it. A voice
+// recording is left out either way: its words are already the text, and no
+// agent can play the SILK file WeChat sends.
 func (d *Daemon) attachmentLines(ctx context.Context, ep fsp.EndpointID, atts []fsp.Attachment) []string {
 	var lines []string
 	maxMB := d.maxMediaMB()
 	for _, a := range atts {
+		if a.Kind == "voice" {
+			continue
+		}
 		if a.Path != "" {
 			lines = append(lines, d.t(ctx, ep, "prompt.attachment", map[string]any{"Path": a.Path}))
 			continue
@@ -151,4 +194,146 @@ func (d *Daemon) maxMediaMB() int {
 		return n
 	}
 	return defaultMaxMediaMB
+}
+
+// Before a decision word sent without an ID ("同意") may answer the approval
+// waiting, the approval's question must have been delivered for bareShown, so
+// it has been on screen; and no approval at the endpoint may have lapsed within
+// bareAfterLapse, so an answer typed for one that just timed out does not land
+// on the next.
+const (
+	bareShown      = 3 * time.Second
+	bareAfterLapse = time.Minute
+)
+
+// bareVerdict handles a decision word sent without an ID ("同意", "y"). It
+// reports false, leaving the word to be ordinary text, when the sender cannot
+// decide or nothing is waiting at the endpoint. Otherwise the word never
+// reaches an agent: it answers the one approval waiting when that cannot be
+// mistaken, and the approver is asked to add the ID when it can.
+func (d *Daemon) bareVerdict(ctx context.Context, in fsp.Inbound, decision fsp.Decision, arrived time.Time) bool {
+	ep := in.Endpoint
+	if !d.deps.ACL.IsApprover(ep, in.SenderID) {
+		return false
+	}
+	open := d.deps.Approvals.Pending(ctx, ep)
+	if len(open) == 0 || d.maybeSettled(open) {
+		return false
+	}
+	if hasVoice(in.Attachments) && decision != fsp.DecisionReject {
+		d.reply(ctx, ep, "approval.voice_allow", nil)
+		return true
+	}
+	if d.bareAnswers(ctx, ep, open, decision, arrived) {
+		d.deps.Approvals.Resolve(ctx, open[0].ID, decision, in.SenderID)
+		return true
+	}
+	lines := make([]string, 0, len(open))
+	for _, p := range open {
+		lines = append(lines, d.t(ctx, ep, "approval.need_id_item", map[string]any{
+			"ID": p.ID, "Slot": d.slotOf(ctx, ep, p.Session),
+		}))
+	}
+	id := open[len(open)-1].ID
+	why := ""
+	if decision == fsp.DecisionAllowAlways {
+		why = d.t(ctx, ep, "approval.need_id_always", map[string]any{"ID": id})
+	}
+	d.reply(ctx, ep, "approval.need_id", map[string]any{
+		"N": len(open), "ID": id, "Why": why, "List": strings.Join(lines, "\n"),
+	})
+	return true
+}
+
+// maybeSettled reports whether every approval in open belongs to a Claude
+// Code channel session. Claude Code asks in its terminal as well and never
+// says when it was answered there, so such an approval may be long settled:
+// a bare word is left to be text, as it was before bare words counted.
+func (d *Daemon) maybeSettled(open []ports.PendingApproval) bool {
+	for _, p := range open {
+		s := d.lookup(p.Session)
+		if s == nil || s.snapshot().Driver != fsp.DriverClaudeChannel {
+			return false
+		}
+	}
+	return true
+}
+
+// nudgeAwaiting tells an approver whose foreground session waits on an
+// approval that the approval is still open and their message is held back
+// until the turn ends, once per approval. Without it a "好的" meant as an answer sits unanswered until the
+// approval times out.
+func (d *Daemon) nudgeAwaiting(ctx context.Context, in fsp.Inbound, s *session) {
+	ep := in.Endpoint
+	if s.State() != fsp.StateAwaiting || !d.deps.ACL.IsApprover(ep, in.SenderID) {
+		return
+	}
+	rec := s.snapshot()
+	if rec.Driver == fsp.DriverClaudeChannel {
+		return
+	}
+	for _, p := range d.deps.Approvals.Pending(ctx, ep) {
+		if p.Session != rec.ID || p.ShownAt.IsZero() {
+			continue
+		}
+		d.mu.Lock()
+		told := d.nudged[ep.String()] == p.ID
+		d.nudged[ep.String()] = p.ID
+		d.mu.Unlock()
+		if !told {
+			d.reply(ctx, ep, "approval.still_waiting", map[string]any{"ID": p.ID})
+		}
+		return
+	}
+}
+
+// bareAnswers reports whether a decision word without an ID can only mean the
+// approval waiting: the only one at the endpoint, of the foreground session,
+// shown long enough, with no other approval lapsed just before. "Always allow"
+// is never given without the ID: a lone "a" is too easily an answer to
+// something else, and it outlasts the approval.
+func (d *Daemon) bareAnswers(ctx context.Context, ep fsp.EndpointID, open []ports.PendingApproval, decision fsp.Decision, arrived time.Time) bool {
+	if decision == fsp.DecisionAllowAlways || len(open) != 1 {
+		return false
+	}
+	if open[0].ShownAt.IsZero() || arrived.Sub(open[0].ShownAt) < bareShown {
+		return false
+	}
+	if lapsed := d.deps.Approvals.Lapsed(ep); !lapsed.IsZero() && arrived.Sub(lapsed) < bareAfterLapse {
+		return false
+	}
+	fg := d.foreground(ctx, ep)
+	return fg != nil && fg.id() == open[0].Session
+}
+
+// resolveVerdict applies a verdict that names its approval. A spoken one may
+// only refuse: transcription can drop the 不 of 不同意.
+func (d *Daemon) resolveVerdict(ctx context.Context, in fsp.Inbound, id string, decision fsp.Decision) {
+	if hasVoice(in.Attachments) && decision != fsp.DecisionReject {
+		d.reply(ctx, in.Endpoint, "approval.voice_allow", nil)
+		return
+	}
+	d.deps.Approvals.Resolve(ctx, id, decision, in.SenderID)
+}
+
+// onlyVoice reports whether a message carries attachments and every one of
+// them is a voice recording.
+func onlyVoice(atts []fsp.Attachment) bool {
+	for _, a := range atts {
+		if a.Kind != "voice" {
+			return false
+		}
+	}
+	return len(atts) != 0
+}
+
+// hasVoice reports whether a message carries a voice recording, which on
+// WeChat means its text is the platform's transcription of it.
+func hasVoice(atts []fsp.Attachment) bool {
+	for _, a := range atts {
+		if a.Kind == "voice" {
+			return true
+		}
+	}
+	return false
 }

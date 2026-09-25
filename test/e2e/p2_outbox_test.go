@@ -171,9 +171,9 @@ func TestHeldAndDigest(t *testing.T) {
 	if result <= digest {
 		t.Fatalf("the result is at #%d and the digest at #%d, want the digest first", result, digest)
 	}
-	if n := r.heldCount(); n != 0 {
-		t.Errorf("%d messages are still held, want the backlog cleared", n)
-	}
+	// The gateway records a message before the outbox marks its row sent, so
+	// the count can lag the message just seen by a moment.
+	r.waitFor("the backlog to be cleared", func() bool { return r.heldCount() == 0 })
 }
 
 // B8 (spec-p2 2.2): twelve messages pile up while the window is shut; the next

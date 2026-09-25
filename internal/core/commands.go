@@ -144,13 +144,17 @@ func (d *Daemon) startSession(ctx context.Context, ep fsp.EndpointID, agent, cwd
 }
 
 // cmdNew starts a session in a directory the sender may work in: the one
-// given, or else the first of the sender's roots.
+// given, or else the first of the sender's roots. A bare /new starts the
+// default agent there, so a phone never has to type an agent name or a path.
 func (d *Daemon) cmdNew(ctx context.Context, ep fsp.EndpointID, sender string, args []string) {
-	if len(args) == 0 {
+	agent := d.deps.Config.DefaultAgent
+	if len(args) != 0 {
+		agent = args[0]
+	}
+	if agent == "" {
 		d.reply(ctx, ep, "usage.new", nil)
 		return
 	}
-	agent := args[0]
 	dir := ""
 	if len(args) > 1 {
 		dir = strings.Join(args[1:], " ")
@@ -290,6 +294,17 @@ func (d *Daemon) cmdStop(ctx context.Context, ep fsp.EndpointID) {
 		d.reply(ctx, ep, "hint.no_session", nil)
 		return
 	}
+	s.mu.Lock()
+	dropped := s.dropGatherLocked()
+	busy := s.busyLocked()
+	s.mu.Unlock()
+	if dropped && !busy {
+		// The pieces never reached the agent, so there is no turn to cancel and
+		// no turn end to say it stopped.
+		d.typing(ctx, ep, false)
+		d.reply(ctx, ep, "turn.stopped", nil)
+		return
+	}
 	if as := s.live(); as != nil {
 		if err := as.Cancel(ctx); err != nil {
 			d.log.Error("cancel turn", "session", s.id(), "error", err)
@@ -304,7 +319,7 @@ func (d *Daemon) cmdClose(ctx context.Context, ep fsp.EndpointID, args []string)
 	if len(args) != 0 {
 		n, err := strconv.Atoi(strings.TrimSpace(args[0]))
 		if err != nil || n <= 0 {
-			d.reply(ctx, ep, "usage.use", nil)
+			d.reply(ctx, ep, "usage.close", nil)
 			return
 		}
 		slot, s = n, d.bySlot(ctx, ep, n)
@@ -321,10 +336,14 @@ func (d *Daemon) cmdClose(ctx context.Context, ep fsp.EndpointID, args []string)
 	as := s.as
 	s.as = nil
 	s.pending = nil
+	gathering := s.dropGatherLocked()
 	s.rec.State = fsp.StateClosed
 	s.rec.LastActive = d.deps.Clock.Now()
 	rec := s.rec
 	s.mu.Unlock()
+	if gathering {
+		d.typing(ctx, ep, false)
+	}
 
 	if as != nil {
 		if err := as.Close(); err != nil {
@@ -417,7 +436,7 @@ func (d *Daemon) cmdFile(ctx context.Context, ep fsp.EndpointID, args []string) 
 	if len(args) != 0 {
 		parsed, err := strconv.Atoi(strings.TrimSpace(args[0]))
 		if err != nil || parsed <= 0 {
-			d.reply(ctx, ep, "usage.use", nil)
+			d.reply(ctx, ep, "usage.file", nil)
 			return
 		}
 		n = parsed
@@ -491,7 +510,7 @@ func (d *Daemon) cmdLang(ctx context.Context, ep fsp.EndpointID, args []string) 
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
 	case "zh", "zh-cn", "zh-hans", "cn", "中文":
 		lang = fsp.LangZH
-	case "en", "en-us", "english":
+	case "en", "en-us", "english", "英文", "英语":
 		lang = fsp.LangEN
 	default:
 		d.reply(ctx, ep, "usage.lang", nil)

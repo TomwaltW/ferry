@@ -751,3 +751,53 @@ func TestLsAndAgents(t *testing.T) {
 	h.owner("/help")
 	h.waitText("help.text|")
 }
+
+func TestBareNewStartsTheDefaultAgent(t *testing.T) {
+	h := newHarness(t)
+	h.owner("/new")
+	created := h.waitText("session.created|")
+	want := fmt.Sprintf("session.created|zh-CN Agent=%s Cwd=%s Slot=1", testAgent, h.root)
+	if created.Text != want {
+		t.Errorf("reply = %q, want %q", created.Text, want)
+	}
+	h.waitFor("the agent to start", func() bool { return h.driver.startCount() == 1 })
+	if spec := h.driver.agent(0).spec; spec.Agent != testAgent || spec.Cwd != h.root {
+		t.Errorf("spec = %+v, want the default agent in the first root", spec)
+	}
+}
+
+func TestBareNewWithoutDefaultAgent(t *testing.T) {
+	h := newTestbed(t)
+	h.deps.Config.DefaultAgent = ""
+	h.start()
+	h.owner("/new")
+	h.waitText("usage.new")
+	if n := h.driver.startCount(); n != 0 {
+		t.Errorf("%d agents started, want none", n)
+	}
+}
+
+// Each command answers a bad number with its own usage line.
+func TestCloseAndFileUsage(t *testing.T) {
+	h := newHarness(t)
+	h.newSession()
+	h.owner("/close x")
+	h.waitText("usage.close|")
+	h.owner("/file x")
+	h.waitText("usage.file|")
+	if n := h.countText("usage.use|"); n != 0 {
+		t.Errorf("%d /use usage lines, want none", n)
+	}
+}
+
+func TestLangTakesChineseNames(t *testing.T) {
+	h := newHarness(t)
+	for _, word := range []string{"英文", "英语"} {
+		h.owner("/lang " + word)
+		h.waitFor("the switch to English", func() bool {
+			lang, _ := h.store.GetKV(context.Background(), langKey(h.ep))
+			return lang == string(fsp.LangEN)
+		})
+		mustNil(t, h.store.SetKV(context.Background(), langKey(h.ep), string(fsp.LangZH)))
+	}
+}

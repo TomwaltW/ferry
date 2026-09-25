@@ -72,9 +72,9 @@ ferry daemon
 ```
 
 `ferry init` 问你语言、允许 agent 工作的目录、默认 agent。
-`ferry login wechat` 会画出二维码 —— 用**要当 bot 的那个号**扫，
-平时用另一个号跟它说话。然后给那个 bot 发 `/new kimi ~/code/demo`，
-派个活，审批用 `y <编码>` 回。完整流程见
+`ferry login wechat` 会画出二维码 —— 用**你平时聊天的那个号**扫，
+这个号就是 bot 的 owner。然后给 bot 发 `/new kimi ~/code/demo`，
+派个活，审批回 `同意 <编码>`；只有一个审批在等时回「同意」就行。完整流程见
 [docs/zh-CN/quickstart.md](docs/zh-CN/quickstart.md)，
 聊天这一侧见 [docs/zh-CN/wechat.md](docs/zh-CN/wechat.md)。
 

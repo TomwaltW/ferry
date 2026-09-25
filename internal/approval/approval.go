@@ -61,6 +61,9 @@ type manager struct {
 
 	mu      sync.Mutex
 	pending map[string]*pendingApproval
+	// lapsed is when an approval asked at each endpoint last ended without a
+	// human answer: timed out or cancelled.
+	lapsed map[fsp.EndpointID]time.Time
 }
 
 // pendingApproval is an approval waiting for a human. result carries the
@@ -68,6 +71,8 @@ type manager struct {
 type pendingApproval struct {
 	req    fsp.ApprovalRequest
 	owner  fsp.EndpointID
+	asked  time.Time // when the question was queued for owner
+	key    string    // the dedupe key the question was queued under
 	result chan fsp.Verdict
 }
 
@@ -120,6 +125,7 @@ func New(opts Options) ports.Approvals {
 		log:           log,
 		timeout:       timeout,
 		pending:       make(map[string]*pendingApproval),
+		lapsed:        make(map[fsp.EndpointID]time.Time),
 	}
 }
 
@@ -162,31 +168,35 @@ func (m *manager) auto(ctx context.Context, req fsp.ApprovalRequest, d fsp.Decis
 
 // askOwner registers the approval, sends the question and waits.
 func (m *manager) askOwner(ctx context.Context, req fsp.ApprovalRequest) (fsp.Verdict, error) {
-	owner, err := m.sessionOwner(ctx, req.Session)
+	rec, err := m.store.GetSession(ctx, req.Session)
 	if err != nil {
 		// With nobody to ask, refusing is the only safe answer.
 		m.log.Error("approval: no owner to ask", "session", req.Session, "error", err)
 		id, _, _ := firstOption(req.Options, fsp.OptRejectOnce, fsp.OptRejectAlways)
 		return m.auto(ctx, req, fsp.DecisionReject, id), nil
 	}
+	owner := rec.Owner
+	// Claude Code asks in its terminal too, so the core never lets a word
+	// without the ID answer its approvals; the question must not offer one.
+	bare := rec.Driver != fsp.DriverClaudeChannel
 
+	// The key is the one part of the message that reaches the adapter as it
+	// was sent, so it carries the approval to entry points with buttons
+	// (spec-p4-b1 3.6). Pending also reads the question's delivery back by it.
+	_, _, always := firstOption(req.Options, fsp.OptAllowAlways)
 	m.mu.Lock()
 	req.ID = m.idForLocked(req.ID)
-	p := &pendingApproval{req: req, owner: owner, result: make(chan fsp.Verdict, 1)}
+	key := ports.ApprovalDedupeKey(ports.ApprovalRef{ID: req.ID, AllowAlways: always}, req.CreatedAt)
+	p := &pendingApproval{req: req, owner: owner, asked: m.clk.Now(), key: key, result: make(chan fsp.Verdict, 1)}
 	m.pending[req.ID] = p
 	m.mu.Unlock()
 
 	m.record(ctx, req)
-	// The key is the one part of the message that reaches the adapter as it
-	// was sent, so it carries the approval to entry points with buttons
-	// (spec-p4-b1 3.6).
-	_, _, always := firstOption(req.Options, fsp.OptAllowAlways)
-	key := ports.ApprovalDedupeKey(ports.ApprovalRef{ID: req.ID, AllowAlways: always}, req.CreatedAt)
 	m.send(ctx, fsp.Outbound{
 		Endpoint:  owner,
 		Session:   req.Session,
 		Kind:      fsp.OutApproval,
-		Text:      m.requestText(req),
+		Text:      m.requestText(req, bare),
 		Urgent:    true,
 		DedupeKey: key,
 	})
@@ -200,6 +210,7 @@ func (m *manager) askOwner(ctx context.Context, req fsp.ApprovalRequest) (fsp.Ve
 			// Someone answered as the timer fired; their verdict is on its way.
 			return <-p.result, nil
 		}
+		m.lapse(owner)
 		clean := context.WithoutCancel(ctx)
 		v := rejectVerdict(req, byTimeout)
 		m.persist(clean, v, req)
@@ -209,6 +220,7 @@ func (m *manager) askOwner(ctx context.Context, req fsp.ApprovalRequest) (fsp.Ve
 		if _, won := m.take(req.ID); !won {
 			return <-p.result, nil
 		}
+		m.lapse(owner)
 		clean := context.WithoutCancel(ctx)
 		v := fsp.Verdict{ApprovalID: req.ID, Decision: fsp.DecisionReject, By: byCancel}
 		m.persist(clean, v, req)
@@ -218,11 +230,16 @@ func (m *manager) askOwner(ctx context.Context, req fsp.ApprovalRequest) (fsp.Ve
 
 // requestText renders the approval question. The description and the preview
 // are shortened and the preview is also masked, because it is the field that
-// carries whatever the agent was about to run.
-func (m *manager) requestText(req fsp.ApprovalRequest) string {
+// carries whatever the agent was about to run. bare adds that a word without
+// the ID will do while this is the only approval waiting.
+func (m *manager) requestText(req fsp.ApprovalRequest, bare bool) string {
 	hint := ""
 	if _, _, ok := firstOption(req.Options, fsp.OptAllowAlways); ok {
 		hint = m.t("approval.always_hint", map[string]any{"ID": req.ID})
+	}
+	bareHint := ""
+	if bare {
+		bareHint = m.t("approval.bare_hint", nil)
 	}
 	return m.t("approval.request", map[string]any{
 		"ID":          req.ID,
@@ -230,6 +247,7 @@ func (m *manager) requestText(req fsp.ApprovalRequest) string {
 		"Description": security.SanitizeForIM(req.Description, descriptionBudget),
 		"Preview":     security.MaskSecrets(security.SanitizeForIM(req.InputPreview, previewBudget)),
 		"AlwaysHint":  hint,
+		"BareHint":    bareHint,
 	})
 }
 
@@ -239,6 +257,13 @@ func (m *manager) sessionOwner(ctx context.Context, id fsp.SessionID) (fsp.Endpo
 		return fsp.EndpointID{}, err
 	}
 	return s.Owner, nil
+}
+
+// lapse notes that an approval asked at ep ended without a human answer.
+func (m *manager) lapse(ep fsp.EndpointID) {
+	m.mu.Lock()
+	m.lapsed[ep] = m.clk.Now()
+	m.mu.Unlock()
 }
 
 // take removes the pending approval and reports whether this caller is the one

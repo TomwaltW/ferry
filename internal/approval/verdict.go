@@ -3,11 +3,16 @@ package approval
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"math/big"
 	"regexp"
+	"slices"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/TomwaltW/ferry/internal/fsp"
+	"github.com/TomwaltW/ferry/internal/ports"
 )
 
 // idAlphabet leaves out "l", which is too easy to read as "1" in a chat
@@ -17,25 +22,127 @@ const (
 	idLen      = 5
 )
 
-// verdictPattern recognises a whole message that is nothing but a decision,
-// for example "y abcde" or "NO zxcvb".
-var verdictPattern = regexp.MustCompile(`(?i)^\s*(y|yes|a|always|n|no)\s+([a-km-z]{5})\s*$`)
+// verdictWords are the words a decision can be written with. The ASCII ones
+// must be followed by a space before the ID; the Chinese ones may run into it
+// ("同意abcde"), which is how a Chinese keyboard types it.
+var verdictWords = map[string]fsp.Decision{
+	"y":      fsp.DecisionAllowOnce,
+	"yes":    fsp.DecisionAllowOnce,
+	"同意":     fsp.DecisionAllowOnce,
+	"允许":     fsp.DecisionAllowOnce,
+	"a":      fsp.DecisionAllowAlways,
+	"always": fsp.DecisionAllowAlways,
+	"总是":     fsp.DecisionAllowAlways,
+	"总是允许":   fsp.DecisionAllowAlways,
+	"始终允许":   fsp.DecisionAllowAlways,
+	"n":      fsp.DecisionReject,
+	"no":     fsp.DecisionReject,
+	"拒绝":     fsp.DecisionReject,
+	"不同意":    fsp.DecisionReject,
+	"不允许":    fsp.DecisionReject,
+}
 
-// ParseVerdict identifies a decision sent as a whole message.
+// closingMarks are the sentence endings a verdict may carry, voice input in
+// particular: WeChat transcribes a spoken "同意" as "同意。". A question mark is
+// not among them, because a question is not a decision.
+const closingMarks = "。．.！!～~"
+
+// notBare are decision words that need their ID: a lone "a" is what a pinyin
+// keyboard sends for 啊, and "always" outlasts the approval it answers.
+var notBare = map[string]bool{"a": true, "always": true}
+
+// ParseVerdict identifies a decision sent as a whole message: a decision word
+// and an ID ("y abcde", "同意 abcde", "同意abcde", "同意，abcde"), or the word
+// alone ("同意"), which reports an empty ID and leaves the core to decide
+// whether it may stand for the one approval waiting.
 func (m *manager) ParseVerdict(text string) (string, fsp.Decision, bool) {
-	match := verdictPattern.FindStringSubmatch(text)
-	if match == nil {
-		return "", "", false
+	text = strings.Map(func(r rune) rune {
+		if strings.ContainsRune("，,：:", r) {
+			return ' '
+		}
+		return r
+	}, text)
+	text = strings.TrimSpace(strings.TrimRight(strings.TrimSpace(text), closingMarks))
+	fields := strings.Fields(text)
+	switch len(fields) {
+	case 1:
+		word := strings.ToLower(fields[0])
+		if d, ok := verdictWords[word]; ok {
+			if notBare[word] {
+				return "", "", false
+			}
+			return "", d, true
+		}
+		return gluedVerdict(fields[0])
+	case 2:
+		d, ok := verdictWords[strings.ToLower(fields[0])]
+		id := strings.ToLower(fields[1])
+		if !ok || !idPattern.MatchString(id) {
+			return "", "", false
+		}
+		return id, d, true
 	}
-	id := strings.ToLower(match[2])
-	switch strings.ToLower(match[1]) {
-	case "y", "yes":
-		return id, fsp.DecisionAllowOnce, true
-	case "a", "always":
-		return id, fsp.DecisionAllowAlways, true
-	default:
-		return id, fsp.DecisionReject, true
+	return "", "", false
+}
+
+// gluedVerdict reads a Chinese decision word with the ID right after it.
+func gluedVerdict(word string) (string, fsp.Decision, bool) {
+	for w, d := range verdictWords {
+		rest, ok := strings.CutPrefix(word, w)
+		if !ok || w[0] < utf8.RuneSelf {
+			continue
+		}
+		if id := strings.ToLower(rest); idPattern.MatchString(id) {
+			return id, d, true
+		}
 	}
+	return "", "", false
+}
+
+// Pending lists the approvals asked at ep that nobody has answered yet, oldest
+// first, each with when its question got through: the outbox row it was queued
+// under has been accepted by the platform. A question still queued, held back,
+// refused or of unknown fate has a zero ShownAt.
+func (m *manager) Pending(ctx context.Context, ep fsp.EndpointID) []ports.PendingApproval {
+	type entry struct {
+		open ports.PendingApproval
+		key  string
+	}
+	m.mu.Lock()
+	var entries []entry
+	for id, p := range m.pending {
+		if p.owner == ep {
+			entries = append(entries, entry{ports.PendingApproval{ID: id, Session: p.req.Session, AskedAt: p.asked}, p.key})
+		}
+	}
+	m.mu.Unlock()
+
+	open := make([]ports.PendingApproval, 0, len(entries))
+	for _, e := range entries {
+		row, err := m.store.OutboxByKey(ctx, ep, e.key)
+		switch {
+		case err == nil && row.State == fsp.DeliveryAccepted:
+			e.open.ShownAt = row.UpdatedAt
+		case err != nil && !errors.Is(err, fsp.ErrNotFound):
+			m.log.Error("approval: look up the question", "id", e.open.ID, "error", err)
+		}
+		open = append(open, e.open)
+	}
+	slices.SortFunc(open, func(a, b ports.PendingApproval) int {
+		if c := a.AskedAt.Compare(b.AskedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return open
+}
+
+// Lapsed reports when an approval asked at ep last ended without a human
+// answer, timed out or cancelled; zero when none has.
+func (m *manager) Lapsed(ep fsp.EndpointID) time.Time {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lapsed[ep]
 }
 
 // Resolve applies a human decision. It reports false for an ID that is not
@@ -61,8 +168,21 @@ func (m *manager) Resolve(ctx context.Context, id string, d fsp.Decision, by str
 	v := fsp.Verdict{ApprovalID: id, Decision: d, OptionID: optionID, By: by}
 	p.result <- v
 	m.persist(ctx, v, p.req)
-	m.reply(ctx, p, "approval.decided", map[string]any{"ID": id, "Decision": string(d)})
+	m.reply(ctx, p, "approval.decided", map[string]any{"ID": id, "Decision": m.decisionText(d)})
 	return true
+}
+
+// decisionText is the decision as the follow-up message words it, never the raw
+// value the drivers see.
+func (m *manager) decisionText(d fsp.Decision) string {
+	switch d {
+	case fsp.DecisionAllowOnce:
+		return m.t("approval.decision.allow_once", nil)
+	case fsp.DecisionAllowAlways:
+		return m.t("approval.decision.allow_always", nil)
+	default:
+		return m.t("approval.decision.reject", nil)
+	}
 }
 
 // CancelSession ends every approval still open for the session, as a refusal
@@ -70,10 +190,12 @@ func (m *manager) Resolve(ctx context.Context, id string, d fsp.Decision, by str
 func (m *manager) CancelSession(id fsp.SessionID) {
 	m.mu.Lock()
 	var cancelled []*pendingApproval
+	now := m.clk.Now()
 	for key, p := range m.pending {
 		if p.req.Session == id {
 			cancelled = append(cancelled, p)
 			delete(m.pending, key)
+			m.lapsed[p.owner] = now
 		}
 	}
 	m.mu.Unlock()
@@ -106,17 +228,18 @@ func firstOptionID(options []fsp.ApprovalOption, kind fsp.ApprovalOptionKind) (s
 	return id, ok
 }
 
-// presetIDPattern is the shape an ID must have for the module to keep it:
-// exactly the alphabet and length freshIDLocked produces. A request that
-// already carries such an ID comes from a peer that has shown it to a human —
-// Claude Code's permission relay issues the ID before Ferry ever sees the
-// request — so reusing it keeps one ID on both sides of the relay.
-var presetIDPattern = regexp.MustCompile(`^[a-km-z]{5}$`)
+// idPattern is the shape of an approval ID: exactly the alphabet and length
+// freshIDLocked produces. A verdict must name an ID of this shape (compared in
+// lower case), and a request that already carries one keeps it: it comes from
+// a peer that has shown it to a human — Claude Code's permission relay issues
+// the ID before Ferry ever sees the request — so reusing it keeps one ID on
+// both sides of the relay.
+var idPattern = regexp.MustCompile(`^[a-km-z]{5}$`)
 
 // idForLocked keeps the ID the request arrived with when it is well formed and
 // free, and assigns a new one otherwise. The caller holds m.mu.
 func (m *manager) idForLocked(preset string) string {
-	if presetIDPattern.MatchString(preset) {
+	if idPattern.MatchString(preset) {
 		if _, taken := m.pending[preset]; !taken {
 			return preset
 		}

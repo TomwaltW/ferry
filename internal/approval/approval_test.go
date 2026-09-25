@@ -656,7 +656,7 @@ func TestPresetIDAccepted(t *testing.T) {
 			h.outbox.next(t)
 			if got := h.pendingID(t); got == bad {
 				t.Errorf("the module kept %q, which is not a well-formed ID", got)
-			} else if !presetIDPattern.MatchString(got) {
+			} else if !idPattern.MatchString(got) {
 				t.Errorf("the replacement ID %q is not well formed either", got)
 			}
 		})
@@ -699,7 +699,7 @@ func TestPresetIDCollision(t *testing.T) {
 	if other == "" {
 		t.Fatal("the second request reused qrstu")
 	}
-	if !presetIDPattern.MatchString(other) {
+	if !idPattern.MatchString(other) {
 		t.Errorf("the assigned ID %q is not well formed", other)
 	}
 

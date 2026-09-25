@@ -72,7 +72,7 @@ func (b *box) pumpEndpoint(ctx context.Context, ep fsp.EndpointID) error {
 		// Anything non-urgent still waiting for this session rides along at the
 		// front of the urgent message instead of spending a reply of its own.
 		var merged []ports.OutboxRow
-		rest := normal[:0]
+		var rest []ports.OutboxRow
 		for _, n := range normal {
 			if n.Msg.Session == u.Msg.Session {
 				merged = append(merged, n)
@@ -80,10 +80,28 @@ func (b *box) pumpEndpoint(ctx context.Context, ep fsp.EndpointID) error {
 			}
 			rest = append(rest, n)
 		}
-		normal = rest
 		consumed := make([]ports.OutboxRow, 0, len(merged)+1)
 		consumed = append(consumed, merged...)
 		consumed = append(consumed, u)
+		if u.Msg.Kind == fsp.OutApproval {
+			// An approval question must arrive whole: cut short, it may lose
+			// the tool and preview while its row still reads as delivered, and
+			// a bare "同意" relies on that row. The riders wait instead, and a
+			// question that cannot fit even alone waits for the next window.
+			budget := b.budget(ep, win)
+			if !b.fitsWhole(consumed, budget) {
+				consumed = []ports.OutboxRow{u}
+				rest = normal
+			}
+			if !b.fitsWhole(consumed, budget) {
+				normal = rest
+				if err := b.hold(ctx, ep, u, reasonBudget); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		normal = rest
 		if err := b.deliver(ctx, ep, &win, u, consumed, b.budget(ep, win)); err != nil {
 			return err
 		}
@@ -352,6 +370,12 @@ func dedupeKey(primary ports.OutboxRow, segment int) string {
 		return primary.Msg.DedupeKey
 	}
 	return fmt.Sprintf("%s-%d", primary.Msg.DedupeKey, segment+1)
+}
+
+// fitsWhole reports whether rows sent as one delivery take at most budget
+// replies without anything being cut.
+func (b *box) fitsWhole(rows []ports.OutboxRow, budget int) bool {
+	return len(splitText(joinTexts(rows), b.cfg.LongOutputThreshold)) <= budget
 }
 
 func joinTexts(rows []ports.OutboxRow) string {

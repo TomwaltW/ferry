@@ -35,6 +35,14 @@ const (
 // exists, spec-p2 3.2 fixes it at 23 hours.
 const DefaultWindowTTL = 23 * time.Hour
 
+// DefaultGather is how long an idle session waits for the rest of a message
+// sent in pieces, and maxGather the longest wait Validate accepts: past that
+// the pause reads as the bot not answering.
+const (
+	DefaultGather = 2500 * time.Millisecond
+	maxGather     = 10 * time.Second
+)
+
 // The two ways of handling a turn whose text is too long for chat.
 const (
 	LongOutputFile  = "file"
@@ -100,6 +108,7 @@ func Default() Config {
 			FileKeep:            20,
 			LongOutput:          LongOutputFile,
 		},
+		Input:   InputConfig{Gather: Duration{DefaultGather}},
 		Handoff: HandoffConfig{LookbackDays: 7},
 		Notify: NotifyConfig{
 			Events:      []string{"approval_pending", "turn_finished", "im_offline"},
@@ -272,6 +281,9 @@ func (c Config) Validate() error {
 	}
 	if c.Outbox.WindowTTL.Duration < minWindowTTL {
 		return fmt.Errorf("outbox.window_ttl: %s is below %s", c.Outbox.WindowTTL.Duration, minWindowTTL)
+	}
+	if g := c.Input.Gather.Duration; g < 0 || g > maxGather {
+		return fmt.Errorf("input.gather: %s is outside 0s to %s", g, maxGather)
 	}
 	switch c.Outbox.LongOutput {
 	case LongOutputFile, LongOutputSplit:

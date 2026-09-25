@@ -44,13 +44,30 @@ type ACL interface {
 
 type Approvals interface {
 	Approver
-	// ParseVerdict recognises a verdict sent as a whole message, such as "y abcde".
+	// ParseVerdict recognises a verdict sent as a whole message, such as
+	// "y abcde" or "同意 abcde". A decision word on its own ("同意", "y")
+	// reports ok with an empty id: the caller decides, from Pending, whether
+	// it may stand for the one approval waiting.
 	ParseVerdict(text string) (id string, d fsp.Decision, ok bool)
+	// Pending lists the approvals whose question went to ep and is still
+	// unanswered, oldest first.
+	Pending(ctx context.Context, ep fsp.EndpointID) []PendingApproval
+	// Lapsed reports when an approval asked at ep last ended without a human
+	// answer (timed out or cancelled); zero when none has.
+	Lapsed(ep fsp.EndpointID) time.Time
 	// Resolve applies a verdict. An unknown or already finished ID returns
 	// false and the caller drops the message silently.
 	Resolve(ctx context.Context, id string, d fsp.Decision, by string) bool
 	// CancelSession ends every pending approval of the session as cancelled.
 	CancelSession(id fsp.SessionID)
+}
+
+// PendingApproval is an approval still waiting for a human.
+type PendingApproval struct {
+	ID      string
+	Session fsp.SessionID
+	AskedAt time.Time // when the question was queued for the endpoint
+	ShownAt time.Time // when the platform accepted the question; zero until it has
 }
 
 type Command struct {
